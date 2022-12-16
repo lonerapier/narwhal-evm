@@ -1,9 +1,11 @@
 use crate::AbciQueryQuery;
+use ethers::prelude::*;
+use std::convert::TryFrom;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::oneshot::Sender as OneShotSender;
-
 // Tendermint Types
+use anvil_rpc::request::RpcMethodCall;
 use tendermint_abci::{Client as AbciClient, ClientBuilder};
 use tendermint_proto::abci::{
     RequestBeginBlock, RequestDeliverTx, RequestEndBlock, RequestInfo, RequestInitChain,
@@ -33,6 +35,7 @@ pub struct Engine {
     pub last_block_height: i64,
     pub client: AbciClient,
     pub req_client: AbciClient,
+    pub provider: Provider<Http>,
 }
 
 impl Engine {
@@ -42,6 +45,7 @@ impl Engine {
         rx_abci_queries: Receiver<(OneShotSender<ResponseQuery>, AbciQueryQuery)>,
     ) -> Self {
         let mut client = ClientBuilder::default().connect(&app_address).unwrap();
+        let provider = Provider::<Http>::try_from(&app_address.to_string()).unwrap();
 
         let last_block_height = client
             .info(RequestInfo::default())
@@ -58,20 +62,21 @@ impl Engine {
             last_block_height,
             client,
             req_client,
+            provider,
         }
     }
 
     /// Receives an ordered list of certificates and apply any application-specific logic.
     pub async fn run(&mut self, mut rx_output: Receiver<Certificate>) -> eyre::Result<()> {
         self.init_chain()?;
-
+        println!("Engine run");
         loop {
             tokio::select! {
                 Some(certificate) = rx_output.recv() => {
-                    self.handle_cert(certificate)?;
+                    self.handle_cert(certificate).await?;
                 },
                 Some((tx, req)) = self.rx_abci_queries.recv() => {
-                    self.handle_abci_query(tx, req)?;
+                    self.handle_abci_query(tx, req).await?;
                 }
                 else => break,
             }
@@ -82,7 +87,7 @@ impl Engine {
 
     /// On each new certificate, increment the block height to proposed and run through the
     /// BeginBlock -> DeliverTx for each tx in the certificate -> EndBlock -> Commit event loop.
-    fn handle_cert(&mut self, certificate: Certificate) -> eyre::Result<()> {
+    async fn handle_cert(&mut self, certificate: Certificate) -> eyre::Result<()> {
         // increment block
         let proposed_block_height = self.last_block_height + 1;
 
@@ -91,7 +96,7 @@ impl Engine {
 
         // drive the app through the event loop
         self.begin_block(proposed_block_height)?;
-        self.reconstruct_and_deliver_txs(certificate)?;
+        self.reconstruct_and_deliver_txs(certificate).await?;
         self.end_block(proposed_block_height)?;
         self.commit()?;
         Ok(())
@@ -102,7 +107,7 @@ impl Engine {
     /// Primary and then to the client.
     ///
     /// Client => Primary => handle_cert => ABCI App => Primary => Client
-    fn handle_abci_query(
+    async fn handle_abci_query(
         &mut self,
         tx: OneShotSender<ResponseQuery>,
         req: AbciQueryQuery,
@@ -110,14 +115,26 @@ impl Engine {
         let req_height = req.height.unwrap_or(0);
         let req_prove = req.prove.unwrap_or(false);
 
-        let resp = self.req_client.query(RequestQuery {
-            data: req.data.into(),
-            path: req.path,
-            height: req_height as i64,
-            prove: req_prove,
-        })?;
+        // let resp = self.req_client.query(RequestQuery {
+        //     data: req.data.into(),
+        //     path: req.path,
+        //     height: req_height as i64,
+        //     prove: req_prove,
+        // })?;
 
-        if let Err(err) = tx.send(resp) {
+        let rpc_call: RpcMethodCall = serde_json::from_str(&req.data).unwrap();
+
+        let res = self
+            .provider
+            .request(&rpc_call.method, rpc_call.params)
+            .await?;
+
+        let res_ser = serde_json::to_string(&res)?;
+
+        if let Err(err) = tx.send(ResponseQuery {
+            value: res_ser.into(),
+            ..Default::default()
+        }) {
             eyre::bail!("{:?}", err);
         }
         Ok(())
@@ -160,9 +177,25 @@ impl Engine {
         Ok(())
     }
 
+    async fn deliver_anvil_batch(&mut self, batch: Vec<u8>) -> eyre::Result<()> {
+        // Deserialize and parse the message.
+        match bincode::deserialize(&batch) {
+            Ok(WorkerMessage::Batch(batch)) => {
+                // batch.into_iter().try_for_each(|tx| {
+                //     self.deliver_tx(tx)?;
+                //     Ok::<_, eyre::Error>(())
+                // })?;
+                for tx in batch {
+                    self.deliver_anvil_tx(tx).await?;
+                }
+            }
+            _ => eyre::bail!("unrecognized message format"),
+        };
+        Ok(())
+    }
     /// Reconstructs the batch corresponding to the provided Primary's certificate from the Workers' stores
     /// and proceeds to deliver each tx to the App over ABCI's DeliverTx endpoint.
-    fn reconstruct_and_deliver_txs(&mut self, certificate: Certificate) -> eyre::Result<()> {
+    async fn reconstruct_and_deliver_txs(&mut self, certificate: Certificate) -> eyre::Result<()> {
         // Try reconstructing the batches from the cert digests
         //
         // NB:
@@ -178,12 +211,17 @@ impl Engine {
             .collect::<Vec<_>>();
 
         // Deliver
-        batches.into_iter().try_for_each(|batch| {
-            // this will throw an error if the deserialization failed anywhere
+        // batches.into_iter().try_for_each(|batch| {
+        //     // this will throw an error if the deserialization failed anywhere
+        //     let batch = batch?;
+        //     self.deliver_batch(batch)?;
+        //     Ok::<_, eyre::Error>(())
+        // })?;
+
+        for batch in batches {
             let batch = batch?;
-            self.deliver_batch(batch)?;
-            Ok::<_, eyre::Error>(())
-        })?;
+            self.deliver_anvil_batch(batch).await?;
+        }
 
         Ok(())
     }
@@ -234,6 +272,30 @@ impl Engine {
     /// Calls the `DeliverTx` hook on the ABCI app.
     fn deliver_tx(&mut self, tx: Transaction) -> eyre::Result<()> {
         self.client.deliver_tx(RequestDeliverTx { tx })?;
+        Ok(())
+    }
+
+    async fn deliver_anvil_tx(&mut self, tx: Transaction) -> eyre::Result<()> {
+        let anvil_tx: Transaction = tx.clone();
+        let mut anvil_tx: TransactionRequest = match serde_json::from_slice(&anvil_tx) {
+            Ok(tx) => tx,
+            Err(err) => {
+                // tracing::error!("could not decode request");
+                eyre::bail!(err);
+            }
+        };
+
+        // resolve the `to`
+        match anvil_tx.to {
+            Some(NameOrAddress::Address(addr)) => anvil_tx.to = Some(addr.into()),
+            _ => panic!("not an address"),
+        };
+
+        let tx_receipt = self
+            .provider
+            .send_transaction(anvil_tx, None)
+            .await?
+            .await?;
         Ok(())
     }
 

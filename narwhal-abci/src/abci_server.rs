@@ -74,6 +74,12 @@ impl AbciApi<ResponseQuery> {
                 }
             });
 
+        // let route_json_rpc_req = warp::path("json_rpc_req")
+        //     .and(warp::query::<RpcMethodRequest>())
+        //     .and_then(move |req: RpcMethodRequest| {
+        //
+        //     });
+
         route_broadcast_tx.or(route_abci_query)
     }
 }

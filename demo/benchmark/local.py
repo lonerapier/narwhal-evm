@@ -93,7 +93,7 @@ class LocalBench:
             # Probably the TPU equivalent?
             workers_addresses = committee.workers_addresses(self.faults)
 
-
+            # TODO: add anvil instance instead
             print("[+] Spinning up apps")
             # Run the apps
             for i, address in enumerate(committee.app_addresses(self.faults)):

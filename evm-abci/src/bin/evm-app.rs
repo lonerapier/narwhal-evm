@@ -1,8 +1,8 @@
 use abci::async_api::Server;
-use evm_abci::App;
-use std::net::SocketAddr;
-
+use anvil::{spawn, NodeConfig};
 use clap::Parser;
+use ethers::utils::Anvil;
+use std::net::SocketAddr;
 
 #[derive(Debug, Clone, Parser)]
 struct Args {
@@ -29,22 +29,34 @@ pub fn subscriber() {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     let args = Args::parse();
-    subscriber();
+    // subscriber();
 
-    let App {
-        consensus,
-        mempool,
-        info,
-        snapshot,
-    } = App::new(args.demo);
-    let server = Server::new(consensus, mempool, info, snapshot);
-
-    dbg!(&args.host);
-    // let addr = args.host.strip_prefix("http://").unwrap_or(&args.host);
+    // let App {
+    //     consensus,
+    //     mempool,
+    //     info,
+    //     snapshot,
+    // } = App::new(args.demo);
+    // let server = Server::new(consensus, mempool, info, snapshot);
     let addr = args.host.parse::<SocketAddr>().unwrap();
 
+    let config = anvil::NodeConfig {
+        host: Some(addr.ip()),
+        port: addr.port(),
+        ..Default::default()
+    };
+
+    let (_, handle) = spawn(config).await;
+
+    handle.await.unwrap();
+    // let anvil = Anvil::new().port(addr.port()).spawn();
+
+    println!("Listening on {}", addr);
+    // let addr = args.host.strip_prefix("http://").unwrap_or(&args.host);
+    // let addr = args.host.parse::<SocketAddr>().unwrap();
+
     // let addr = SocketAddr::new(addr, args.port);
-    server.run(addr).await?;
+    // server.run(addr).await?;
 
     Ok(())
 }

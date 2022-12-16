@@ -1,21 +1,28 @@
+use anvil_rpc::request::{Id, RequestParams, RpcMethodCall, Version};
 use ethers::prelude::*;
 use evm_abci::types::{Query, QueryResponse};
 use eyre::Result;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use yansi::{Paint};
+use yansi::Paint;
 
-static ALICE: Lazy<Address> = Lazy::new(||{
-    "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".parse::<Address>().unwrap()
+static ALICE: Lazy<Address> = Lazy::new(|| {
+    "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        .parse::<Address>()
+        .unwrap()
 });
-static BOB: Lazy<Address> = Lazy::new(||{
-    "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB".parse::<Address>().unwrap()
+static BOB: Lazy<Address> = Lazy::new(|| {
+    "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+        .parse::<Address>()
+        .unwrap()
 });
-static CHARLIE: Lazy<Address> = Lazy::new(||{
-    "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC".parse::<Address>().unwrap()
+static CHARLIE: Lazy<Address> = Lazy::new(|| {
+    "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        .parse::<Address>()
+        .unwrap()
 });
 
-static ADDRESS_TO_NAME: Lazy<HashMap<Address, &'static str>> = Lazy::new(||{
+static ADDRESS_TO_NAME: Lazy<HashMap<Address, &'static str>> = Lazy::new(|| {
     let mut address_to_name = HashMap::new();
     address_to_name.insert(*ALICE, "Alice");
     address_to_name.insert(*BOB, "Bob");
@@ -23,7 +30,6 @@ static ADDRESS_TO_NAME: Lazy<HashMap<Address, &'static str>> = Lazy::new(||{
 
     address_to_name
 });
-
 
 fn get_readable_eth_value(value: U256) -> Result<f64> {
     let value_string = ethers::utils::format_units(value, "ether")?;
@@ -51,6 +57,26 @@ async fn query_balance(host: &str, address: Address) -> Result<()> {
         Paint::new(name).bold(),
         Paint::green(format!("{} ETH", readable_value)).bold()
     );
+    Ok(())
+}
+
+async fn get_dev_accounts(host: &str) -> Result<()> {
+    let json_rpc_query = RpcMethodCall {
+        jsonrpc: Version::V2,
+        method: "eth_accounts".to_owned(),
+        params: RequestParams::Array(vec![]),
+        id: Id::Number(1),
+    };
+    let query = serde_json::to_string(&json_rpc_query)?;
+
+    let client = reqwest::Client::new();
+    let res = client
+        .get(format!("{}/abci_query", host))
+        .query(&[("data", query), ("path", "".to_string())])
+        .send()
+        .await?;
+
+    println!("dev accounts: {:?}", res.text().await?);
     Ok(())
 }
 
@@ -104,29 +130,31 @@ async fn main() -> Result<()> {
     let host_2 = "http://127.0.0.1:3009";
     let host_3 = "http://127.0.0.1:3016";
 
-    let value = ethers::utils::parse_units(1, 18)?;
+    // let value = ethers::utils::parse_units(1, 18)?.into();
 
     // Query initial balances from host_1
-    query_all_balances(host_1).await?;
+    // query_all_balances(host_1).await?;
 
     println!("---");
 
     // Send conflicting transactions
-    println!(
-        "{} sends {} transactions:",
-        Paint::new("Alice").bold(),
-        Paint::red(format!("conflicting")).bold()
-    );
-    send_transaction(host_2, *ALICE, *BOB, value).await?;
-    send_transaction(host_3, *ALICE, *CHARLIE, value).await?;
+    // println!(
+    //     "{} sends {} transactions:",
+    //     Paint::new("Alice").bold(),
+    //     Paint::red(format!("conflicting")).bold()
+    // );
+    // send_transaction(host_2, *ALICE, *BOB, value).await?;
+    // send_transaction(host_3, *ALICE, *CHARLIE, value).await?;
+    //
+    // println!("---");
+    //
+    // println!("Waiting for consensus...");
+    // // Takes ~5 seconds to actually apply the state transition?
+    // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    //
+    // println!("---");
 
-    println!("---");
-
-    println!("Waiting for consensus...");
-    // Takes ~5 seconds to actually apply the state transition?
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-    println!("---");
+    get_dev_accounts(host_1).await?;
 
     // Query final balances from host_2
     query_all_balances(host_2).await?;

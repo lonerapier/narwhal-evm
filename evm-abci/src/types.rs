@@ -74,17 +74,17 @@ impl<Db: Database + DatabaseCommit> State<Db> {
         };
         evm.database(&mut self.db);
 
-        let (ret, out, gas, state, logs) = evm.transact();
+        let (ret, out) = evm.transact();
         if !read_only {
-            self.db.commit(state);
+            self.db.commit(out);
         };
 
         Ok(TransactionResult {
             transaction: tx,
-            exit: ret,
-            gas,
-            logs,
-            out,
+            exit: ret.exit_reason,
+            gas: ret.gas_used,
+            logs: ret.logs,
+            out: ret.out,
         })
     }
 }
@@ -195,6 +195,7 @@ pub struct Info<Db> {
 pub enum Query {
     EthCall(TransactionRequest),
     Balance(Address),
+    // DevAccounts,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -202,6 +203,7 @@ pub enum Query {
 pub enum QueryResponse {
     Tx(TransactionResult),
     Balance(U256),
+    // DevAccounts(Vec<Address>),
 }
 
 impl QueryResponse {
@@ -247,7 +249,10 @@ impl<Db: Send + Sync + Database + DatabaseCommit> InfoTrait for Info<Db> {
                 let result = state.execute(tx, true).await.unwrap();
                 QueryResponse::Tx(result)
             }
-            Query::Balance(address) => QueryResponse::Balance(state.db.basic(address).balance),
+            // Query::Balance(address) => QueryResponse::Balance(state.db.basic(address).balance),
+            Query::Balance(address) => {
+                QueryResponse::Balance(state.db.basic(address).ok().unwrap().unwrap().balance)
+            }
         };
 
         ResponseQuery {
@@ -292,7 +297,7 @@ mod tests {
         state.db.insert_account_info(
             alice,
             revm::AccountInfo {
-                balance: val,
+                balance: val.into(),
                 ..Default::default()
             },
         );
@@ -330,6 +335,6 @@ mod tests {
             .await;
         let res: QueryResponse = serde_json::from_slice(&res.value).unwrap();
         let balance = res.as_balance();
-        assert_eq!(balance, val);
+        assert_eq!(balance, val.into());
     }
 }
