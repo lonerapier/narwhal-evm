@@ -63,7 +63,8 @@ async fn query_balance(host: &str, address: Address) -> Result<()> {
 async fn get_dev_accounts(host: &str) -> Result<()> {
     let json_rpc_query = RpcMethodCall {
         jsonrpc: Version::V2,
-        method: "eth_accounts".to_owned(),
+        // method: "eth_accounts".to_owned(),
+        method: "eth_chainId".to_owned(),
         params: RequestParams::Array(vec![]),
         id: Id::Number(1),
     };
