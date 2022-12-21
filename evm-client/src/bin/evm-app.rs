@@ -1,7 +1,5 @@
-use abci::async_api::Server;
-use anvil::{spawn, NodeConfig};
+use anvil::spawn;
 use clap::Parser;
-use ethers::utils::Anvil;
 use std::net::SocketAddr;
 
 #[derive(Debug, Clone, Parser)]
@@ -29,15 +27,8 @@ pub fn subscriber() {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     let args = Args::parse();
-    subscriber();
+    // subscriber();
 
-    // let App {
-    //     consensus,
-    //     mempool,
-    //     info,
-    //     snapshot,
-    // } = App::new(args.demo);
-    // let server = Server::new(consensus, mempool, info, snapshot);
     let addr = args.host.parse::<SocketAddr>().unwrap();
 
     let config = anvil::NodeConfig {
@@ -48,15 +39,14 @@ async fn main() -> eyre::Result<()> {
 
     let (_, handle) = spawn(config).await;
 
-    handle.await.unwrap();
-    // let anvil = Anvil::new().port(addr.port()).spawn();
-
-    println!("Listening on {}", addr);
-    // let addr = args.host.strip_prefix("http://").unwrap_or(&args.host);
-    // let addr = args.host.parse::<SocketAddr>().unwrap();
-
-    // let addr = SocketAddr::new(addr, args.port);
-    // server.run(addr).await?;
+    match handle.await.unwrap() {
+        Err(err) => {
+            dbg!(err);
+        }
+        Ok(()) => {
+            println!("Listening on {}", addr);
+        }
+    }
 
     Ok(())
 }

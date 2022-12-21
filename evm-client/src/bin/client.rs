@@ -1,6 +1,6 @@
 use anvil_rpc::request::{Id, RequestParams, RpcMethodCall, Version};
 use ethers::prelude::*;
-use evm_abci::types::{Query, QueryResponse};
+use evm_client::types::QueryResponse;
 use eyre::Result;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -37,17 +37,26 @@ fn get_readable_eth_value(value: U256) -> Result<f64> {
 }
 
 async fn query_balance(host: &str, address: Address) -> Result<()> {
-    let query = Query::Balance(address);
-    let query = serde_json::to_string(&query)?;
+    let balance_query = RpcMethodCall {
+        jsonrpc: Version::V2,
+        method: "eth_getBalance".to_owned(),
+        params: RequestParams::Array(vec![
+            serde_json::to_value(address)?,
+            serde_json::to_value(Option::<BlockId>::None)?,
+        ]),
+        id: Id::Number(1),
+    };
+    let query = serde_json::to_string(&balance_query)?;
 
     let client = reqwest::Client::new();
     let res = client
-        .get(format!("{}/abci_query", host))
+        .get(format!("{}/rpc_query", host))
         .query(&[("data", query), ("path", "".to_string())])
         .send()
         .await?;
 
     let val = res.bytes().await?;
+    // let val = res.te
     let val: QueryResponse = serde_json::from_slice(&val)?;
     let val = val.as_balance();
     let readable_value = get_readable_eth_value(val)?;
@@ -60,11 +69,10 @@ async fn query_balance(host: &str, address: Address) -> Result<()> {
     Ok(())
 }
 
-async fn get_dev_accounts(host: &str) -> Result<()> {
+async fn get_dev_accounts(host: &str) -> Result<Vec<H160>> {
     let json_rpc_query = RpcMethodCall {
         jsonrpc: Version::V2,
-        // method: "eth_accounts".to_owned(),
-        method: "eth_chainId".to_owned(),
+        method: "eth_accounts".to_owned(),
         params: RequestParams::Array(vec![]),
         id: Id::Number(1),
     };
@@ -72,13 +80,18 @@ async fn get_dev_accounts(host: &str) -> Result<()> {
 
     let client = reqwest::Client::new();
     let res = client
-        .get(format!("{}/abci_query", host))
+        .get(format!("{}/rpc_query", host))
         .query(&[("data", query), ("path", "".to_string())])
         .send()
         .await?;
 
-    println!("dev accounts: {:?}", res.text().await?);
-    Ok(())
+    println!("dev accounts: {:?}", res.bytes().await?);
+    // let val: QueryResponse = serde_json::from_slice(&res.bytes().await?)?;
+    // let val = val.as_dev_accounts();
+    //
+    // println!("dev accounts: {:?}", val);
+    // Ok((*val).clone())
+    Ok(vec![])
 }
 
 async fn query_all_balances(host: &str) -> Result<()> {

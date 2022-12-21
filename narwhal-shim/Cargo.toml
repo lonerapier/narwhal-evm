@@ -1,5 +1,5 @@
 [package]
-name = "narwhal-abci"
+name = "narwhal-shim"
 version = "0.1.0"
 edition = "2021"
 
@@ -26,3 +26,4 @@ narwhal_crypto = { package = "crypto", git = "https://github.com/asonnino/narwha
 serde_json = "1.0.82"
 ethers = "1.0.2"
 anvil-rpc = {package = "anvil-rpc", git = "https://github.com/foundry-rs/foundry"}
+anvil-core = { package = "anvil-core", git = "https://github.com/foundry-rs/foundry" }

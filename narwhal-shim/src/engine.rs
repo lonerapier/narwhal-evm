@@ -1,14 +1,11 @@
-use crate::AbciQueryQuery;
+use crate::JsonRpcRequest;
+use anvil_core::eth::EthRequest;
 use ethers::prelude::*;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
-use std::fmt::Debug;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::oneshot::Sender as OneShotSender;
 // Tendermint Types
-use anvil_rpc::request::RpcMethodCall;
 use tendermint_proto::abci::ResponseQuery;
 
 // Narwhal types
@@ -22,8 +19,7 @@ pub struct Engine {
     /// for the data corresponding to a Certificate
     pub store_path: String,
     /// Messages received from the ABCI Server to be forwarded to the engine.
-    pub rx_abci_queries: Receiver<(OneShotSender<ResponseQuery>, AbciQueryQuery)>,
-    /// The last block height, initialized to the application's latest block by default
+    pub rx_rpc_queries: Receiver<(OneShotSender<ResponseQuery>, JsonRpcRequest)>,
     pub client: Provider<Http>,
     pub req_client: Provider<Http>,
 }
@@ -32,10 +28,8 @@ impl Engine {
     pub fn new(
         app_address: SocketAddr,
         store_path: &str,
-        rx_abci_queries: Receiver<(OneShotSender<ResponseQuery>, AbciQueryQuery)>,
+        rx_rpc_queries: Receiver<(OneShotSender<ResponseQuery>, JsonRpcRequest)>,
     ) -> Self {
-        // Instantiate a new client to not be locked in an Info connection
-
         let req_client =
             Provider::<Http>::try_from(String::from("http://") + &app_address.to_string()).unwrap();
         let client =
@@ -44,7 +38,7 @@ impl Engine {
         Self {
             app_address,
             store_path: store_path.to_string(),
-            rx_abci_queries,
+            rx_rpc_queries,
             client,
             req_client,
         }
@@ -58,8 +52,8 @@ impl Engine {
                 Some(certificate) = rx_output.recv() => {
                     self.handle_cert(certificate).await?;
                 },
-                Some((tx, req)) = self.rx_abci_queries.recv() => {
-                    self.handle_abci_query(tx, req).await?;
+                Some((tx, req)) = self.rx_rpc_queries.recv() => {
+                    self.handle_rpc_query(tx, req).await?;
                 }
                 else => break,
             }
@@ -84,36 +78,77 @@ impl Engine {
     /// Primary and then to the client.
     ///
     /// Client => Primary => handle_cert => ABCI App => Primary => Client
-    async fn handle_abci_query(
+    async fn handle_rpc_query(
         &mut self,
         tx: OneShotSender<ResponseQuery>,
-        req: AbciQueryQuery,
+        req: JsonRpcRequest,
     ) -> eyre::Result<()> {
-        let rpc_call: RpcMethodCall = serde_json::from_str(&req.data).unwrap();
+        let value: serde_json::Value = req.params.clone().into();
+        let method: String = req.method.clone();
+        let rpc_req = serde_json::json!({
+            "method": method.clone(),
+            "params": value,
+        });
 
-        let resp: Result<String, ProviderError> = self
-            .req_client
-            .request(&rpc_call.method, rpc_call.params)
-            .await;
-
-        let res = match resp {
-            Ok(resp) => resp,
-            Err(e) => {
-                log::error!("Error in handle_abci_query: {:?}", e);
-                // return Ok(());
-                "error".to_string()
+        let res = match serde_json::from_value::<EthRequest>(rpc_req) {
+            Ok(req) => self.client_request(req, &method, value).await?,
+            Err(err) => {
+                let err = err.to_string();
+                if err.contains("unknown variant") {
+                    log::error!("failed to deserialize method due to unknown variant");
+                } else {
+                    log::error!("failed to deserialize method");
+                }
+                err
             }
         };
 
-        let res_ser = serde_json::to_string(&res)?;
-
         if let Err(err) = tx.send(ResponseQuery {
-            value: res_ser.into(),
+            value: res.into(),
             ..Default::default()
         }) {
             eyre::bail!("{:?}", err);
         }
         Ok(())
+    }
+
+    async fn client_request(
+        &self,
+        req: EthRequest,
+        method: &str,
+        params: serde_json::Value,
+    ) -> eyre::Result<String> {
+        match req {
+            EthRequest::EthChainId(params) => {
+                let res: String = self.client.request(method, params).await.unwrap();
+                serde_json::to_string(&res).map_err(Into::into)
+            }
+            EthRequest::EthAccounts(params) => {
+                let res: Vec<Address> = self.client.request(method, params).await.unwrap();
+                serde_json::to_string(&res).map_err(Into::into)
+            }
+            EthRequest::EthBlockNumber(params) => {
+                let res: u64 = self.client.request(method, params).await.unwrap();
+                serde_json::to_string(&res).map_err(Into::into)
+            }
+            EthRequest::EthGetBalance(_, _) => {
+                let res: U256 = self.client.request(method, params).await.unwrap();
+                serde_json::to_string(&res).map_err(Into::into)
+            }
+            EthRequest::EthGetTransactionCount(_, _) => {
+                let res: U256 = self.client.request(method, params).await.unwrap();
+                serde_json::to_string(&res).map_err(Into::into)
+            }
+            EthRequest::EthSign(_, _) => {
+                let res: H256 = self.client.request(method, params).await.unwrap();
+                serde_json::to_string(&res).map_err(Into::into)
+            }
+            EthRequest::EthGetLogs(_) => {
+                let res: H256 = self.client.request(method, params).await.unwrap();
+                serde_json::to_string(&res).map_err(Into::into)
+            }
+            _ => eyre::bail!("not implemented"),
+        }
     }
 
     /// Opens a RocksDB handle to a Worker's database and tries to read the batch
@@ -243,7 +278,7 @@ impl Engine {
             _ => panic!("not an address"),
         };
 
-        let tx_receipt = self.client.send_transaction(anvil_tx, None).await?.await?;
+        self.client.send_transaction(anvil_tx, None).await?.await?;
         Ok(())
     }
 
@@ -272,11 +307,3 @@ pub type Batch = Vec<Transaction>;
 pub enum WorkerMessage {
     Batch(Batch),
 }
-
-// #[derive(Serialize, Deserialize, Debug)]
-// struct RpcJsonResponse<T>
-// where
-//     T: Serialize + DeserializeOwned,
-// {
-//     value: T,
-// }

@@ -203,7 +203,7 @@ pub enum Query {
 pub enum QueryResponse {
     Tx(TransactionResult),
     Balance(U256),
-    // DevAccounts(Vec<Address>),
+    DevAccounts(Vec<Address>),
 }
 
 impl QueryResponse {
@@ -218,6 +218,13 @@ impl QueryResponse {
         match self {
             QueryResponse::Balance(inner) => *inner,
             _ => panic!("not a balance"),
+        }
+    }
+
+    pub fn as_dev_accounts(&self) -> &Vec<Address> {
+        match self {
+            QueryResponse::DevAccounts(inner) => inner,
+            _ => panic!("not a dev accounts"),
         }
     }
 }

@@ -1,5 +1,5 @@
-mod abci_server;
-pub use abci_server::AbciApi;
+mod shim_server;
+pub use shim_server::RpcShim;
 
 mod engine;
 pub use engine::Engine;
@@ -12,9 +12,7 @@ pub struct BroadcastTxQuery {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AbciQueryQuery {
-    path: String,
-    data: String,
-    height: Option<usize>,
-    prove: Option<bool>,
+pub struct JsonRpcRequest {
+    method: String,
+    params: String,
 }

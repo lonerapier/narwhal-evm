@@ -34,5 +34,5 @@ rocksdb = "0.16.0"
 warp = "0.3.2"
 serde = { version = "1.0", features = ["derive"] }
 
-narwhal-abci = { path = "../narwhal-abci" }
+narwhal-shim = { path = "../narwhal-shim" }
 eyre = "0.6.8"
