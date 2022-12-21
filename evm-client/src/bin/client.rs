@@ -2,6 +2,7 @@ use anvil_rpc::request::{Id, RequestParams, RpcMethodCall, Version};
 use ethers::prelude::*;
 use evm_client::types::QueryResponse;
 use eyre::Result;
+use narwhal_shim::JsonRpcRequest;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use yansi::Paint;
@@ -37,14 +38,13 @@ fn get_readable_eth_value(value: U256) -> Result<f64> {
 }
 
 async fn query_balance(host: &str, address: Address) -> Result<()> {
-    let balance_query = RpcMethodCall {
-        jsonrpc: Version::V2,
+    let params = serde_json::to_string(&vec![
+        serde_json::to_value(address)?,
+        serde_json::to_value("latest")?,
+    ])?;
+    let balance_query = JsonRpcRequest {
         method: "eth_getBalance".to_owned(),
-        params: RequestParams::Array(vec![
-            serde_json::to_value(address)?,
-            serde_json::to_value(Option::<BlockId>::None)?,
-        ]),
-        id: Id::Number(1),
+        params,
     };
     let query = serde_json::to_string(&balance_query)?;
 
@@ -70,11 +70,9 @@ async fn query_balance(host: &str, address: Address) -> Result<()> {
 }
 
 async fn get_dev_accounts(host: &str) -> Result<Vec<H160>> {
-    let json_rpc_query = RpcMethodCall {
-        jsonrpc: Version::V2,
+    let json_rpc_query = JsonRpcRequest {
         method: "eth_accounts".to_owned(),
-        params: RequestParams::Array(vec![]),
-        id: Id::Number(1),
+        params: "".to_owned(),
     };
     let query = serde_json::to_string(&json_rpc_query)?;
 

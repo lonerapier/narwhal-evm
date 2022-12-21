@@ -13,6 +13,6 @@ pub struct BroadcastTxQuery {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JsonRpcRequest {
-    method: String,
-    params: String,
+    pub method: String,
+    pub params: String,
 }
