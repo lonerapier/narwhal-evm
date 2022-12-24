@@ -1,7 +1,3 @@
-use ethers::prelude::*;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
 use abci::{
     async_api::{
         Consensus as ConsensusTrait, Info as InfoTrait, Mempool as MempoolTrait,
@@ -10,6 +6,10 @@ use abci::{
     async_trait,
     types::*,
 };
+use ethers::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use foundry_evm::revm::{
     self,
@@ -204,6 +204,21 @@ pub enum QueryResponse {
     Tx(TransactionResult),
     Balance(U256),
     DevAccounts(Vec<Address>),
+    ChainId(U256),
+    BlockNumber(U256),
+    Sign(H256),
+    Logs(Vec<Log>),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BroadcastTxQuery {
+    pub tx: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct JsonRpcRequest {
+    pub method: String,
+    pub params: String,
 }
 
 impl QueryResponse {

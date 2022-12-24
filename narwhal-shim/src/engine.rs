@@ -1,6 +1,9 @@
-use crate::JsonRpcRequest;
+// use crate::JsonRpcRequest;
 use anvil_core::eth::EthRequest;
+use anvil_rpc::error::RpcError;
+use anvil_rpc::request::RpcMethodCall;
 use ethers::prelude::*;
+use evm_client::types::JsonRpcRequest;
 use std::convert::TryFrom;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::Receiver;
@@ -83,7 +86,8 @@ impl Engine {
         tx: OneShotSender<ResponseQuery>,
         req: JsonRpcRequest,
     ) -> eyre::Result<()> {
-        let value: serde_json::Value = req.params.clone().into();
+        dbg!(&req);
+        let value: serde_json::Value = serde_json::from_str(&req.params)?;
         let method: String = req.method.clone();
         let rpc_req = serde_json::json!({
             "method": method.clone(),
@@ -99,12 +103,22 @@ impl Engine {
                 } else {
                     log::error!("failed to deserialize method");
                 }
-                err
+                err.into()
             }
         };
+        // let resp = self
+        //     .req_client
+        //     .request::<_, QueryResponse>(&method, value)
+        //     .await?;
 
+        dbg!(&res);
+
+        // let resp = ResponseQuery::new(
+        //     anvil_rpc::request::Id::Number(1),
+        //     RpcError::invalid_request(),
+        // );
         if let Err(err) = tx.send(ResponseQuery {
-            value: res.into(),
+            value: res,
             ..Default::default()
         }) {
             eyre::bail!("{:?}", err);
@@ -117,35 +131,44 @@ impl Engine {
         req: EthRequest,
         method: &str,
         params: serde_json::Value,
-    ) -> eyre::Result<String> {
+    ) -> eyre::Result<Vec<u8>> {
         match req {
             EthRequest::EthChainId(params) => {
                 let res: String = self.client.request(method, params).await.unwrap();
-                serde_json::to_string(&res).map_err(Into::into)
+                // serde_json::to_string(&res).map_err(Into::into)
+                serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthAccounts(params) => {
                 let res: Vec<Address> = self.client.request(method, params).await.unwrap();
-                serde_json::to_string(&res).map_err(Into::into)
+                // serde_json::to_string(&res).map_err(Into::into)
+
+                serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthBlockNumber(params) => {
                 let res: u64 = self.client.request(method, params).await.unwrap();
-                serde_json::to_string(&res).map_err(Into::into)
+                // serde_json::to_string(&res).map_err(Into::into)
+
+                serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthGetBalance(_, _) => {
                 let res: U256 = self.client.request(method, params).await.unwrap();
-                serde_json::to_string(&res).map_err(Into::into)
+                // serde_json::to_string(&res).map_err(Into::into)
+                serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthGetTransactionCount(_, _) => {
                 let res: U256 = self.client.request(method, params).await.unwrap();
-                serde_json::to_string(&res).map_err(Into::into)
+                // serde_json::to_string(&res).map_err(Into::into)
+                serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthSign(_, _) => {
                 let res: H256 = self.client.request(method, params).await.unwrap();
-                serde_json::to_string(&res).map_err(Into::into)
+                // serde_json::to_string(&res).map_err(Into::into)
+                serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthGetLogs(_) => {
                 let res: H256 = self.client.request(method, params).await.unwrap();
-                serde_json::to_string(&res).map_err(Into::into)
+                // serde_json::to_string(&res).map_err(Into::into)
+                serde_json::to_vec(&res).map_err(Into::into)
             }
             _ => eyre::bail!("not implemented"),
         }

@@ -1,10 +1,10 @@
-use anvil_rpc::request::{Id, RequestParams, RpcMethodCall, Version};
+use anvil_rpc::request::RequestParams;
 use ethers::prelude::*;
 use evm_client::types::QueryResponse;
 use eyre::Result;
-use narwhal_shim::JsonRpcRequest;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use tendermint_proto::abci::ResponseQuery;
 use yansi::Paint;
 
 static ALICE: Lazy<Address> = Lazy::new(|| {
@@ -38,27 +38,22 @@ fn get_readable_eth_value(value: U256) -> Result<f64> {
 }
 
 async fn query_balance(host: &str, address: Address) -> Result<()> {
-    let params = serde_json::to_string(&vec![
+    let params = serde_json::to_string(&RequestParams::Array(vec![
         serde_json::to_value(address)?,
         serde_json::to_value("latest")?,
-    ])?;
-    let balance_query = JsonRpcRequest {
-        method: "eth_getBalance".to_owned(),
-        params,
-    };
-    let query = serde_json::to_string(&balance_query)?;
+    ]))?;
 
     let client = reqwest::Client::new();
     let res = client
         .get(format!("{}/rpc_query", host))
-        .query(&[("data", query), ("path", "".to_string())])
+        .query(&[("method", "eth_getBalance".to_owned()), ("params", params)])
         .send()
         .await?;
 
-    let val = res.bytes().await?;
-    // let val = res.te
-    let val: QueryResponse = serde_json::from_slice(&val)?;
-    let val = val.as_balance();
+    // let val = res.bytes().await?;
+    // let val: QueryResponse = serde_json::from_slice(&val)?;
+    // let val = val.as_balance();
+    let val: U256 = serde_json::from_slice::<U256>(&res.bytes().await?)?;
     let readable_value = get_readable_eth_value(val)?;
     let name = ADDRESS_TO_NAME.get(&address).unwrap();
     println!(
@@ -69,33 +64,31 @@ async fn query_balance(host: &str, address: Address) -> Result<()> {
     Ok(())
 }
 
-async fn get_dev_accounts(host: &str) -> Result<Vec<H160>> {
-    let json_rpc_query = JsonRpcRequest {
-        method: "eth_accounts".to_owned(),
-        params: "".to_owned(),
-    };
-    let query = serde_json::to_string(&json_rpc_query)?;
-
+async fn get_dev_accounts(host: &str) -> Result<Vec<Address>> {
     let client = reqwest::Client::new();
     let res = client
         .get(format!("{}/rpc_query", host))
-        .query(&[("data", query), ("path", "".to_string())])
+        .query(&[
+            ("method", "eth_accounts".to_owned()),
+            (
+                "params",
+                serde_json::to_string(&RequestParams::Array(vec![]))?,
+            ),
+        ])
         .send()
         .await?;
 
-    println!("dev accounts: {:?}", res.bytes().await?);
-    // let val: QueryResponse = serde_json::from_slice(&res.bytes().await?)?;
-    // let val = val.as_dev_accounts();
-    //
-    // println!("dev accounts: {:?}", val);
-    // Ok((*val).clone())
-    Ok(vec![])
+    let val = match serde_json::from_slice::<Vec<Address>>(&res.bytes().await?) {
+        Ok(result) => result,
+        Err(_) => return Err(eyre::eyre!("failed to parse")),
+    };
+    Ok(val)
 }
 
 async fn query_all_balances(host: &str) -> Result<()> {
     println!(
         "Querying balances from {}:",
-        Paint::new(format!("{}", host)).bold()
+        Paint::new(host.to_string()).bold()
     );
 
     query_balance(host, *ALICE).await?;
@@ -164,9 +157,9 @@ async fn main() -> Result<()> {
     // // Takes ~5 seconds to actually apply the state transition?
     // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     //
-    // println!("---");
+    println!("---");
 
-    get_dev_accounts(host_1).await?;
+    let accounts = get_dev_accounts(host_1).await?;
 
     // Query final balances from host_2
     query_all_balances(host_2).await?;

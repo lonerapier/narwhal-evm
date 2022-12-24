@@ -1,5 +1,6 @@
-use crate::{BroadcastTxQuery, JsonRpcRequest};
-
+// use crate::{BroadcastTxQuery, JsonRpcRequest};
+// use anvil_rpc::response::QueryResponse;
+use evm_client::types::{BroadcastTxQuery, JsonRpcRequest};
 use eyre::WrapErr;
 use futures::SinkExt;
 use tendermint_proto::abci::ResponseQuery;
@@ -61,14 +62,16 @@ impl RpcShim<ResponseQuery> {
             .and_then(move |req: JsonRpcRequest| {
                 let tx_rpc_query = self.tx.clone();
                 async move {
-                    log::warn!("abci_query: {:?}", req);
+                    log::warn!("rpc_query: {:?}", req);
 
                     let (tx, rx) = oneshot_channel();
                     match tx_rpc_query.send((tx, req.clone())).await {
                         Ok(_) => {}
-                        Err(err) => log::error!("Error forwarding abci query: {}", err),
+                        Err(err) => log::error!("Error forwarding rpc query: {}", err),
                     };
+
                     let resp = rx.await.unwrap();
+                    // let resp_str = serde_json::to_string(&resp).unwrap();
                     // Return the value
                     Ok::<_, Rejection>(resp.value)
                 }
