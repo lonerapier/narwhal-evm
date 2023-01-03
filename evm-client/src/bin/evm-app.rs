@@ -37,7 +37,8 @@ async fn main() -> eyre::Result<()> {
         ..Default::default()
     };
 
-    let (_, handle) = spawn(config).await;
+    let (api, handle) = spawn(config).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
 
     match handle.await.unwrap() {
         Err(err) => {

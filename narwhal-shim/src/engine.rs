@@ -1,7 +1,4 @@
-// use crate::JsonRpcRequest;
 use anvil_core::eth::EthRequest;
-use anvil_rpc::error::RpcError;
-use anvil_rpc::request::RpcMethodCall;
 use ethers::prelude::*;
 use evm_client::types::JsonRpcRequest;
 use std::convert::TryFrom;
@@ -16,12 +13,12 @@ use narwhal_crypto::Digest;
 use narwhal_primary::Certificate;
 
 pub struct Engine {
-    /// The address of the ABCI app
+    /// The address of the EVM app
     pub app_address: SocketAddr,
     /// The path to the Primary's store, so that the Engine can query each of the Primary's workers
     /// for the data corresponding to a Certificate
     pub store_path: String,
-    /// Messages received from the ABCI Server to be forwarded to the engine.
+    /// Messages received from the RPC Server to be forwarded to the engine.
     pub rx_rpc_queries: Receiver<(OneShotSender<ResponseQuery>, JsonRpcRequest)>,
     pub client: Provider<Http>,
     pub req_client: Provider<Http>,
@@ -65,28 +62,26 @@ impl Engine {
         Ok(())
     }
 
-    /// On each new certificate, increment the block height to proposed and run through the
-    /// BeginBlock -> DeliverTx for each tx in the certificate -> EndBlock -> Commit event loop.
+    /// On each new certificate, deliver the txs batch wise to anvil and then mine after
+    /// successful delivery.
+    /// Client => Primary => handle_cert => EVM App => Primary => Client
     async fn handle_cert(&mut self, certificate: Certificate) -> eyre::Result<()> {
         // drive the app through the event loop
-        // self.begin_block(proposed_block_height)?;
-        self.reconstruct_and_deliver_txs(certificate).await?;
-        // self.end_block(proposed_block_height)?;
-        // self.commit()?;
+        let num_txs = self.reconstruct_and_deliver_txs(certificate).await?;
+        self.commit(num_txs).await?;
         Ok(())
     }
 
-    /// Handles ABCI queries coming to the primary and forwards them to the ABCI App. Each
+    /// Handles RPC queries coming to the primary and forwards them to the Anvil App. Each
     /// handle call comes with a Sender channel which is used to send the response back to the
     /// Primary and then to the client.
     ///
-    /// Client => Primary => handle_cert => ABCI App => Primary => Client
+    /// Client => Primary => Anvil => Primary => Client
     async fn handle_rpc_query(
         &mut self,
         tx: OneShotSender<ResponseQuery>,
         req: JsonRpcRequest,
     ) -> eyre::Result<()> {
-        dbg!(&req);
         let value: serde_json::Value = serde_json::from_str(&req.params)?;
         let method: String = req.method.clone();
         let rpc_req = serde_json::json!({
@@ -111,7 +106,7 @@ impl Engine {
         //     .request::<_, QueryResponse>(&method, value)
         //     .await?;
 
-        dbg!(&res);
+        // dbg!(&res);
 
         // let resp = ResponseQuery::new(
         //     anvil_rpc::request::Id::Number(1),
@@ -135,39 +130,30 @@ impl Engine {
         match req {
             EthRequest::EthChainId(params) => {
                 let res: String = self.client.request(method, params).await.unwrap();
-                // serde_json::to_string(&res).map_err(Into::into)
                 serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthAccounts(params) => {
                 let res: Vec<Address> = self.client.request(method, params).await.unwrap();
-                // serde_json::to_string(&res).map_err(Into::into)
-
                 serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthBlockNumber(params) => {
                 let res: u64 = self.client.request(method, params).await.unwrap();
-                // serde_json::to_string(&res).map_err(Into::into)
-
                 serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthGetBalance(_, _) => {
                 let res: U256 = self.client.request(method, params).await.unwrap();
-                // serde_json::to_string(&res).map_err(Into::into)
                 serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthGetTransactionCount(_, _) => {
                 let res: U256 = self.client.request(method, params).await.unwrap();
-                // serde_json::to_string(&res).map_err(Into::into)
                 serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthSign(_, _) => {
                 let res: H256 = self.client.request(method, params).await.unwrap();
-                // serde_json::to_string(&res).map_err(Into::into)
                 serde_json::to_vec(&res).map_err(Into::into)
             }
             EthRequest::EthGetLogs(_) => {
                 let res: H256 = self.client.request(method, params).await.unwrap();
-                // serde_json::to_string(&res).map_err(Into::into)
                 serde_json::to_vec(&res).map_err(Into::into)
             }
             _ => eyre::bail!("not implemented"),
@@ -194,16 +180,13 @@ impl Engine {
         }
     }
 
-    async fn deliver_anvil_batch(&mut self, batch: Vec<u8>) -> eyre::Result<()> {
+    async fn deliver_batch(&mut self, batch: Vec<u8>) -> eyre::Result<()> {
         // Deserialize and parse the message.
         match bincode::deserialize(&batch) {
             Ok(WorkerMessage::Batch(batch)) => {
-                // batch.into_iter().try_for_each(|tx| {
-                //     self.deliver_tx(tx)?;
-                //     Ok::<_, eyre::Error>(())
-                // })?;
+                // log::warn!("batch_size: {}", batch.len());
                 for tx in batch {
-                    self.deliver_anvil_tx(tx).await?;
+                    self.deliver_tx(tx).await?;
                 }
             }
             _ => eyre::bail!("unrecognized message format"),
@@ -212,8 +195,11 @@ impl Engine {
     }
 
     /// Reconstructs the batch corresponding to the provided Primary's certificate from the Workers' stores
-    /// and proceeds to deliver each tx to the App over ABCI's DeliverTx endpoint.
-    async fn reconstruct_and_deliver_txs(&mut self, certificate: Certificate) -> eyre::Result<()> {
+    /// and proceeds to deliver each tx to the App
+    async fn reconstruct_and_deliver_txs(
+        &mut self,
+        certificate: Certificate,
+    ) -> eyre::Result<usize> {
         // Try reconstructing the batches from the cert digests
         //
         // NB:
@@ -228,12 +214,14 @@ impl Engine {
             .map(|(digest, worker_id)| self.reconstruct_batch(digest, worker_id))
             .collect::<Vec<_>>();
 
+        let len = batches.len();
+
         for batch in batches {
             let batch = batch?;
-            self.deliver_anvil_batch(batch).await?;
+            self.deliver_batch(batch).await?;
         }
 
-        Ok(())
+        Ok(len)
     }
 
     /// Helper function for getting the database handle to a worker associated
@@ -243,49 +231,9 @@ impl Engine {
     }
 }
 
-// Tendermint Lifecycle Helpers
 impl Engine {
-    /// Calls the `InitChain` hook on the app, ignores "already initialized" errors.
-    // pub fn init_chain(&mut self) -> eyre::Result<()> {
-    //     let mut client = ClientBuilder::default().connect(&self.app_address)?;
-    //     match client.init_chain(RequestInitChain::default()) {
-    //         Ok(_) => {}
-    //         Err(err) => {
-    //             // ignore errors about the chain being uninitialized
-    //             if err.to_string().contains("already initialized") {
-    //                 log::warn!("{}", err);
-    //                 return Ok(());
-    //             }
-    //             eyre::bail!(err)
-    //         }
-    //     };
-    //     Ok(())
-    // }
-
-    /// Calls the `BeginBlock` hook on the ABCI app. For now, it just makes a request with
-    /// the new block height.
-    // If we wanted to, we could add additional arguments to be forwarded from the Consensus
-    // to the App logic on the beginning of each block.
-    // fn begin_block(&mut self, height: i64) -> eyre::Result<()> {
-    //     let req = RequestBeginBlock {
-    //         header: Some(Header {
-    //             height,
-    //             ..Default::default()
-    //         }),
-    //         ..Default::default()
-    //     };
-    //
-    //     self.client.begin_block(req)?;
-    //     Ok(())
-    // }
-
-    /// Calls the `DeliverTx` hook on the ABCI app.
-    // fn deliver_tx(&mut self, tx: Transaction) -> eyre::Result<()> {
-    //     self.client.deliver_tx(RequestDeliverTx { tx })?;
-    //     Ok(())
-    // }
-
-    async fn deliver_anvil_tx(&mut self, tx: Transaction) -> eyre::Result<()> {
+    // deliver tx to anvil as pending and then mine it later
+    async fn deliver_tx(&mut self, tx: Transaction) -> eyre::Result<()> {
         let anvil_tx: Transaction = tx.clone();
         let mut anvil_tx: TransactionRequest = match serde_json::from_slice(&anvil_tx) {
             Ok(tx) => tx,
@@ -301,25 +249,19 @@ impl Engine {
             _ => panic!("not an address"),
         };
 
-        self.client.send_transaction(anvil_tx, None).await?.await?;
+        let tx_receipt = self.client.send_transaction(anvil_tx, None).await?.await?;
+        log::info!("tx_executed: {:?}", tx_receipt.as_ref().unwrap());
+        // dbg!(tx_receipt);
         Ok(())
     }
 
-    // / Calls the `EndBlock` hook on the ABCI app. For now, it just makes a request with
-    // / the proposed block height.
-    // If we wanted to, we could add additional arguments to be forwarded from the Consensus
-    // to the App logic on the end of each block.
-    // fn end_block(&mut self, height: i64) -> eyre::Result<()> {
-    //     let req = RequestEndBlock { height };
-    //     self.client.end_block(req)?;
-    //     Ok(())
-    // }
-
-    // / Calls the `Commit` hook on the ABCI app.
-    // fn commit(&mut self) -> eyre::Result<()> {
-    //     self.client.commit()?;
-    //     Ok(())
-    // }
+    // / Calls the `Commit` hook to mine pending txs.
+    async fn commit(&mut self, num_txs: usize) -> eyre::Result<()> {
+        self.client
+            .request("anvil_mine", vec![U256::one() * num_txs, U256::zero()])
+            .await?;
+        Ok(())
+    }
 }
 
 // Helpers for deserializing batches, because `narwhal::worker` is not part

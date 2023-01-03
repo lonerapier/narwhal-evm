@@ -1976,6 +1976,7 @@ dependencies = [
  "eyre",
  "foundry-evm",
  "hex",
+ "log",
  "once_cell",
  "reqwest",
  "serde",

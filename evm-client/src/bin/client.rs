@@ -1,6 +1,5 @@
 use anvil_rpc::request::RequestParams;
 use ethers::prelude::*;
-use evm_client::types::QueryResponse;
 use eyre::Result;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -55,10 +54,11 @@ async fn query_balance(host: &str, address: Address) -> Result<()> {
     // let val = val.as_balance();
     let val: U256 = serde_json::from_slice::<U256>(&res.bytes().await?)?;
     let readable_value = get_readable_eth_value(val)?;
-    let name = ADDRESS_TO_NAME.get(&address).unwrap();
+    // let name = ADDRESS_TO_NAME.get(&address).unwrap();
     println!(
         "{}'s balance: {}",
-        Paint::new(name).bold(),
+        // Paint::new(name).bold(),
+        Paint::new(address).bold(),
         Paint::green(format!("{} ETH", readable_value)).bold()
     );
     Ok(())
@@ -99,16 +99,16 @@ async fn query_all_balances(host: &str) -> Result<()> {
 }
 
 async fn send_transaction(host: &str, from: Address, to: Address, value: U256) -> Result<()> {
-    let from_name = ADDRESS_TO_NAME.get(&from).unwrap();
-    let to_name = ADDRESS_TO_NAME.get(&to).unwrap();
-    let readable_value = get_readable_eth_value(value)?;
-    println!(
-        "{} sends TX to {} transferring {} to {}...",
-        Paint::new(from_name).bold(),
-        Paint::red(host).bold(),
-        Paint::new(format!("{} ETH", readable_value)).bold(),
-        Paint::red(to_name).bold()
-    );
+    // let from_name = ADDRESS_TO_NAME.get(&from).unwrap();
+    // let to_name = ADDRESS_TO_NAME.get(&to).unwrap();
+    // let readable_value = get_readable_eth_value(value)?;
+    // println!(
+    //     "{} sends TX to {} transferring {} to {}...",
+    //     Paint::new(from_name).bold(),
+    //     Paint::red(host).bold(),
+    //     Paint::new(format!("{} ETH", readable_value)).bold(),
+    //     Paint::red(to_name).bold()
+    // );
 
     let tx = TransactionRequest::new()
         .from(from)
@@ -135,39 +135,57 @@ async fn main() -> Result<()> {
     let host_2 = "http://127.0.0.1:3009";
     let host_3 = "http://127.0.0.1:3016";
 
-    // let value = ethers::utils::parse_units(1, 18)?.into();
+    let hosts = vec![host_1, host_2, host_3];
+    let value = ethers::utils::parse_units(1, 17)?.into();
+    let accounts = get_dev_accounts(host_1).await?;
 
     // Query initial balances from host_1
     // query_all_balances(host_1).await?;
 
     println!("---");
 
+    query_balance(host_2, accounts[1]).await?;
     // Send conflicting transactions
     // println!(
     //     "{} sends {} transactions:",
     //     Paint::new("Alice").bold(),
     //     Paint::red(format!("conflicting")).bold()
     // );
-    // send_transaction(host_2, *ALICE, *BOB, value).await?;
-    // send_transaction(host_3, *ALICE, *CHARLIE, value).await?;
-    //
+    let total_txs = 450;
+
+    for i in 0..total_txs {
+        let host = i % 3;
+        send_transaction(hosts[host], accounts[0], accounts[1], value).await?;
+        // send_transaction(hosts[host], accounts[1], accounts[0], value).await?;
+    }
+    // send_transaction(host_2, accounts[0], accounts[1], value).await?;
+    // send_transaction(host_3, accounts[1], accounts[2], value).await?;
+    // println!("Waiting for consensus!");
+    // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    query_balance(host_2, accounts[1]).await?;
+    query_balance(host_1, accounts[0]).await?;
+    // query_balance(host_3, accounts[2]).await?;
+    // send_transaction(host_2, accounts[1], accounts[0], value).await?;
+    // query_balance(host_1, accounts[0]).await?;
+    // send_transaction(host_2, accounts[1], accounts[2], value).await?;
+    // send_transaction(host_2, accounts[2], accounts[0], value).await?;
+    // send_transaction(host_2, accounts[0], accounts[1], value).await?;
+
     // println!("---");
     //
     // println!("Waiting for consensus...");
     // // Takes ~5 seconds to actually apply the state transition?
     // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     //
-    println!("---");
-
-    let accounts = get_dev_accounts(host_1).await?;
-
-    // Query final balances from host_2
-    query_all_balances(host_2).await?;
-
-    println!("---");
-
-    // Query final balances from host_3
-    query_all_balances(host_3).await?;
+    // println!("---");
+    //
+    // // Query final balances from host_2
+    // query_all_balances(host_2).await?;
+    //
+    // println!("---");
+    //
+    // // Query final balances from host_3
+    // query_all_balances(host_3).await?;
 
     Ok(())
 }
