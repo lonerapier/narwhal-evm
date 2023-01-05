@@ -148,7 +148,7 @@ async fn main() -> Result<()> {
     //     Paint::new("Alice").bold(),
     //     Paint::red(format!("conflicting")).bold()
     // );
-    let total_txs = 45;
+    let total_txs = 450;
 
     for i in 0..total_txs {
         let host = i % 3;

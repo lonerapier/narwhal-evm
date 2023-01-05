@@ -23,7 +23,7 @@ pub struct Engine {
     pub rx_rpc_queries: Receiver<(OneShotSender<ResponseQuery>, JsonRpcRequest)>,
     pub client: Provider<Http>,
     pub req_client: Provider<Http>,
-    pub ws_client: Provider<Ws>,
+    // pub ws_client: Provider<Ws>,
 }
 
 impl Engine {
@@ -36,10 +36,10 @@ impl Engine {
             Provider::<Http>::try_from(String::from("http://") + &app_address.to_string()).unwrap();
         let client =
             Provider::<Http>::try_from(String::from("http://") + &app_address.to_string()).unwrap();
-        let ws_client =
-            Provider::<Ws>::connect((String::from("ws://") + &app_address.to_string()).as_str())
-                .await
-                .unwrap();
+        // let ws_client =
+        //     Provider::<Ws>::connect((String::from("ws://") + &app_address.to_string()).as_str())
+        //         .await
+        //         .unwrap();
 
         Self {
             app_address,
@@ -47,7 +47,7 @@ impl Engine {
             rx_rpc_queries,
             client,
             req_client,
-            ws_client,
+            // ws_client,
         }
     }
 
@@ -81,11 +81,11 @@ impl Engine {
         //     .ws_client
         //     .request("eth_subscribe", ["newHeads"])
         //     .await?;
-        let stream = self.ws_client.subscribe_blocks().await?;
-        let blocks = stream.take(num_txs).collect::<Vec<_>>().await;
-        for block in blocks {
-            println!("block: {:?}", block);
-        }
+        // let stream = self.ws_client.subscribe_blocks().await?;
+        // let blocks = stream.take(num_txs).collect::<Vec<_>>().await;
+        // for block in blocks {
+        //     println!("block: {:?}", block);
+        // }
 
         Ok(())
     }
@@ -271,16 +271,30 @@ impl Engine {
 
         let tx_receipt = self.client.send_transaction(anvil_tx, None).await?;
         // log::info!("tx_executed: {:?}", tx_receipt.as_ref().unwrap());
-        dbg!(tx_receipt);
+        // dbg!(tx_receipt);
         Ok(())
     }
 
     // / Calls the `Commit` hook to mine pending txs.
     async fn commit(&mut self, num_txs: usize) -> eyre::Result<()> {
         log::info!("executing {} txs", num_txs);
-        self.client
+        // let res = self
+        //     .client
+        //     .request("anvil_mine", vec![U256::from(num_txs as u64), U256::zero()])
+        //     .await;
+        let res = match self
+            .client
             .request("anvil_mine", vec![U256::from(num_txs as u64), U256::zero()])
-            .await?;
+            .await
+        {
+            Ok(res) => res,
+            Err(err) => {
+                // log::error!("could not mine txs: {}", err);
+                dbg!(&err);
+                eyre::bail!(err);
+            }
+        };
+        // dbg!(res);
         Ok(())
     }
 }

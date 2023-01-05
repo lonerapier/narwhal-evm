@@ -104,23 +104,6 @@ class LocalBench:
 
             sleep(1)
 
-            # print("[+] Spinning up clients")
-            # # The benchmark clients connect to the worker addresses to submit transactions
-            # # Starts 1 client for each worker process.
-            # rate_share = ceil(rate / committee.workers())
-            # for i, addresses in enumerate(workers_addresses):
-            #     for (id, address) in addresses:
-            #         cmd = CommandMaker.run_client(
-            #             address,
-            #             self.tx_size,
-            #             rate_share,
-            #             [x for y in workers_addresses for _, x in y]
-            #         )
-            #         log_file = PathMaker.client_log_file(i, id)
-            #         print("--> [+] Running", cmd, log_file)
-            #         self._background_run(cmd, log_file)
-
-
             print("[+] Spinning up primaries")
             # Run the primaries (except the faulty ones).
             for i, address in enumerate(committee.primary_addresses(self.faults)):
@@ -136,8 +119,9 @@ class LocalBench:
                 log_file = PathMaker.primary_log_file(i)
                 # Each one of these starts a new tmux session
                 self._background_run(cmd, log_file)
-
-
+            # wait for the primaries to start
+            sleep(3)
+            
             print("[+] Spinning up workers")
             # Run the workers (except the faulty ones).
             for i, addresses in enumerate(workers_addresses):
@@ -152,7 +136,24 @@ class LocalBench:
                     )
                     log_file = PathMaker.worker_log_file(i, id)
                     self._background_run(cmd, log_file)
+            # wait for the workers to start
+            sleep(3)
 
+            print("[+] Spinning up clients")
+            # The benchmark clients connect to the worker addresses to submit transactions
+            # Starts 1 client for each worker process.
+            rate_share = ceil(rate / committee.workers())
+            for i, addresses in enumerate(workers_addresses):
+                for (id, address) in addresses:
+                    cmd = CommandMaker.run_client(
+                        address,
+                        self.tx_size,
+                        rate_share,
+                        [x for y in workers_addresses for _, x in y]
+                    )
+                    log_file = PathMaker.client_log_file(i, id)
+                    print("--> [+] Running", cmd, log_file)
+                    self._background_run(cmd, log_file)
 
             # Wait for all transactions to be processed.
             Print.info(f'Running benchmark ({self.duration} sec)...')

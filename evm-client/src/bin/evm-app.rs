@@ -38,6 +38,7 @@ async fn main() -> eyre::Result<()> {
     };
 
     let (api, handle) = spawn(config).await;
+    // api.anvil_set_interval_mining(1)?;
     api.anvil_set_auto_mine(false).await.unwrap();
 
     match handle.await.unwrap() {
