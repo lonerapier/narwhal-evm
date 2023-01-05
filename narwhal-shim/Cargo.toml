@@ -29,3 +29,4 @@ anvil-rpc = {package = "anvil-rpc", git = "https://github.com/foundry-rs/foundry
 anvil-core = { package = "anvil-core", git = "https://github.com/foundry-rs/foundry" }
 
 evm-client = { path = "../evm-client" }
+ethers-providers = "1.0.2"

@@ -139,9 +139,6 @@ async fn main() -> Result<()> {
     let value = ethers::utils::parse_units(1, 17)?.into();
     let accounts = get_dev_accounts(host_1).await?;
 
-    // Query initial balances from host_1
-    // query_all_balances(host_1).await?;
-
     println!("---");
 
     query_balance(host_2, accounts[1]).await?;
@@ -151,25 +148,16 @@ async fn main() -> Result<()> {
     //     Paint::new("Alice").bold(),
     //     Paint::red(format!("conflicting")).bold()
     // );
-    let total_txs = 450;
+    let total_txs = 45;
 
     for i in 0..total_txs {
         let host = i % 3;
         send_transaction(hosts[host], accounts[0], accounts[1], value).await?;
         // send_transaction(hosts[host], accounts[1], accounts[0], value).await?;
     }
-    // send_transaction(host_2, accounts[0], accounts[1], value).await?;
-    // send_transaction(host_3, accounts[1], accounts[2], value).await?;
-    // println!("Waiting for consensus!");
-    // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
     query_balance(host_2, accounts[1]).await?;
     query_balance(host_1, accounts[0]).await?;
-    // query_balance(host_3, accounts[2]).await?;
-    // send_transaction(host_2, accounts[1], accounts[0], value).await?;
-    // query_balance(host_1, accounts[0]).await?;
-    // send_transaction(host_2, accounts[1], accounts[2], value).await?;
-    // send_transaction(host_2, accounts[2], accounts[0], value).await?;
-    // send_transaction(host_2, accounts[0], accounts[1], value).await?;
 
     // println!("---");
     //

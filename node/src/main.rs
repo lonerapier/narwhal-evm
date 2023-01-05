@@ -203,7 +203,7 @@ async fn process(
     // Spawn the network receiver listening to messages from the other primaries.
     let app_address = app_api.parse::<SocketAddr>().unwrap();
     // app_address.set_ip("0.0.0.0".parse().unwrap());
-    let mut engine = Engine::new(app_address, store_path, rx_rpc_queries);
+    let mut engine = Engine::new(app_address, store_path, rx_rpc_queries).await;
     engine.run(rx_output).await?;
 
     Ok(())

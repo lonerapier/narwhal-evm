@@ -1,5 +1,6 @@
 use anvil_core::eth::EthRequest;
 use ethers::prelude::*;
+use ethers_providers::Ws;
 use evm_client::types::JsonRpcRequest;
 use std::convert::TryFrom;
 use std::net::SocketAddr;
@@ -22,10 +23,11 @@ pub struct Engine {
     pub rx_rpc_queries: Receiver<(OneShotSender<ResponseQuery>, JsonRpcRequest)>,
     pub client: Provider<Http>,
     pub req_client: Provider<Http>,
+    pub ws_client: Provider<Ws>,
 }
 
 impl Engine {
-    pub fn new(
+    pub async fn new(
         app_address: SocketAddr,
         store_path: &str,
         rx_rpc_queries: Receiver<(OneShotSender<ResponseQuery>, JsonRpcRequest)>,
@@ -34,6 +36,10 @@ impl Engine {
             Provider::<Http>::try_from(String::from("http://") + &app_address.to_string()).unwrap();
         let client =
             Provider::<Http>::try_from(String::from("http://") + &app_address.to_string()).unwrap();
+        let ws_client =
+            Provider::<Ws>::connect((String::from("ws://") + &app_address.to_string()).as_str())
+                .await
+                .unwrap();
 
         Self {
             app_address,
@@ -41,6 +47,7 @@ impl Engine {
             rx_rpc_queries,
             client,
             req_client,
+            ws_client,
         }
     }
 
@@ -69,6 +76,17 @@ impl Engine {
         // drive the app through the event loop
         let num_txs = self.reconstruct_and_deliver_txs(certificate).await?;
         self.commit(num_txs).await?;
+
+        // let sub_id = self
+        //     .ws_client
+        //     .request("eth_subscribe", ["newHeads"])
+        //     .await?;
+        let stream = self.ws_client.subscribe_blocks().await?;
+        let blocks = stream.take(num_txs).collect::<Vec<_>>().await;
+        for block in blocks {
+            println!("block: {:?}", block);
+        }
+
         Ok(())
     }
 
@@ -180,18 +198,20 @@ impl Engine {
         }
     }
 
-    async fn deliver_batch(&mut self, batch: Vec<u8>) -> eyre::Result<()> {
+    async fn deliver_batch(&mut self, batch: Vec<u8>) -> eyre::Result<usize> {
         // Deserialize and parse the message.
+        let mut len = 0;
         match bincode::deserialize(&batch) {
             Ok(WorkerMessage::Batch(batch)) => {
                 // log::warn!("batch_size: {}", batch.len());
+                len = batch.len();
                 for tx in batch {
                     self.deliver_tx(tx).await?;
                 }
             }
             _ => eyre::bail!("unrecognized message format"),
         };
-        Ok(())
+        Ok(len)
     }
 
     /// Reconstructs the batch corresponding to the provided Primary's certificate from the Workers' stores
@@ -214,11 +234,11 @@ impl Engine {
             .map(|(digest, worker_id)| self.reconstruct_batch(digest, worker_id))
             .collect::<Vec<_>>();
 
-        let len = batches.len();
+        let mut len = 0;
 
         for batch in batches {
             let batch = batch?;
-            self.deliver_batch(batch).await?;
+            len = self.deliver_batch(batch).await?;
         }
 
         Ok(len)
@@ -249,16 +269,17 @@ impl Engine {
             _ => panic!("not an address"),
         };
 
-        let tx_receipt = self.client.send_transaction(anvil_tx, None).await?.await?;
-        log::info!("tx_executed: {:?}", tx_receipt.as_ref().unwrap());
-        // dbg!(tx_receipt);
+        let tx_receipt = self.client.send_transaction(anvil_tx, None).await?;
+        // log::info!("tx_executed: {:?}", tx_receipt.as_ref().unwrap());
+        dbg!(tx_receipt);
         Ok(())
     }
 
     // / Calls the `Commit` hook to mine pending txs.
     async fn commit(&mut self, num_txs: usize) -> eyre::Result<()> {
+        log::info!("executing {} txs", num_txs);
         self.client
-            .request("anvil_mine", vec![U256::one() * num_txs, U256::zero()])
+            .request("anvil_mine", vec![U256::from(num_txs as u64), U256::zero()])
             .await?;
         Ok(())
     }
