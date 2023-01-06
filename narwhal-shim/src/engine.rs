@@ -277,7 +277,9 @@ impl Engine {
 
     // / Calls the `Commit` hook to mine pending txs.
     async fn commit(&mut self, num_txs: usize) -> eyre::Result<()> {
-        log::info!("executing {} txs", num_txs);
+        if num_txs > 0 {
+            log::info!("executing {} txs", num_txs);
+        }
         // let res = self
         //     .client
         //     .request("anvil_mine", vec![U256::from(num_txs as u64), U256::zero()])

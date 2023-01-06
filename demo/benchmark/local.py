@@ -58,9 +58,9 @@ class LocalBench:
             print(cmd)
 
             # Recompile the latest code.
-            # cmd = CommandMaker.compile().split()
-            # print(cmd)
-            # subprocess.run(cmd, check=True, cwd=PathMaker.node_crate_path())
+            cmd = CommandMaker.compile().split()
+            print(cmd)
+            subprocess.run(cmd, check=True, cwd=PathMaker.node_crate_path())
 
             # Create alias for the client and nodes binary.
             cmd = CommandMaker.alias_binaries(PathMaker.binary_path())
@@ -92,8 +92,8 @@ class LocalBench:
             # Worker transaction endpoint (3003, 3008 etc.)
             # Probably the TPU equivalent?
             workers_addresses = committee.workers_addresses(self.faults)
+            abci_addresses = committee.abci_addresses(self.faults)
 
-            # TODO: add anvil instance instead
             print("[+] Spinning up apps")
             # Run the apps
             for i, address in enumerate(committee.app_addresses(self.faults)):
@@ -121,7 +121,7 @@ class LocalBench:
                 self._background_run(cmd, log_file)
             # wait for the primaries to start
             sleep(3)
-            
+
             print("[+] Spinning up workers")
             # Run the workers (except the faulty ones).
             for i, addresses in enumerate(workers_addresses):
@@ -147,7 +147,7 @@ class LocalBench:
                 for (id, address) in addresses:
                     cmd = CommandMaker.run_client(
                         address,
-                        self.tx_size,
+                        abci_addresses[i][1],
                         rate_share,
                         [x for y in workers_addresses for _, x in y]
                     )

@@ -44,7 +44,7 @@ class Committee:
 
     def __init__(self, addresses, base_port):
         ''' The `addresses` field looks as follows:
-            { 
+            {
                 "name": ["host", "host", ...],
                 ...
             }
@@ -126,6 +126,19 @@ class Committee:
             for id, worker in authority['workers'].items():
                 authority_addresses += [(id, worker['transactions'])]
             addresses.append(authority_addresses)
+        return addresses
+
+    def abci_addresses(self, faults=0):
+        ''' Returns an ordered list of list of workers' addresses. '''
+        assert faults < self.size()
+        addresses = []
+        good_nodes = self.size() - faults
+        for authority in list(self.json['authorities'].values())[:good_nodes]:
+            authority_addresses = []
+            # for id, worker in authority['primary'].items():
+            #     authority_addresses += [(id, worker['transactions'])]
+
+            addresses.append([0, authority["primary"]["api_rpc"]])
         return addresses
 
     def ips(self, name=None):
@@ -226,7 +239,7 @@ class BenchParameters:
                 raise ConfigError('Missing input rate')
             self.rate = [int(x) for x in rate]
 
-            
+
             self.workers = int(json['workers'])
 
             if 'collocate' in json:
@@ -235,7 +248,7 @@ class BenchParameters:
                 self.collocate = True
 
             self.tx_size = int(json['tx_size'])
-           
+
             self.duration = int(json['duration'])
 
             self.runs = int(json['runs']) if 'runs' in json else 1

@@ -52,6 +52,7 @@ async fn main() -> Result<()> {
         .version(crate_version!())
         .about("Benchmark client for Narwhal and Tusk.")
         .args_from_usage("<ADDR> 'The network address of the node where to send txs'")
+        .args_from_usage("<SHIM_ADDRESS> 'The shim address to send rpc request to'")
         .args_from_usage("--rate=<INT> 'The rate (txs/s) at which to send the transactions'")
         .args_from_usage("--nodes=[ADDR]... 'Network addresses that must be reachable before starting the benchmark.'")
         .setting(AppSettings::ArgRequiredElseHelp)
@@ -64,6 +65,11 @@ async fn main() -> Result<()> {
         .unwrap()
         .parse::<SocketAddr>()
         .context("Invalid socket address format")?;
+    let shim_address = matches
+        .value_of("SHIM_ADDRESS")
+        .unwrap()
+        .parse::<SocketAddr>()
+        .context("Invalid shim address")?;
     let rate = matches
         .value_of("rate")
         .unwrap()
@@ -76,10 +82,11 @@ async fn main() -> Result<()> {
         .map(|x| x.parse::<SocketAddr>())
         .collect::<Result<Vec<_>, _>>()
         .context("Invalid socket address format")?;
-    let accounts = get_dev_accounts(&target).await?;
+    let accounts = get_dev_accounts(&shim_address).await?;
 
     let client = Client {
         target,
+        shim_address,
         rate,
         nodes,
         accounts,
@@ -94,6 +101,7 @@ async fn main() -> Result<()> {
 
 struct Client {
     target: SocketAddr,
+    shim_address: SocketAddr,
     rate: u64,
     nodes: Vec<SocketAddr>,
     accounts: Vec<(Address, Address)>,
@@ -109,6 +117,7 @@ impl Client {
             .await
             .context(format!("failed to connect to {}", self.target))?;
 
+        let value = ethers::utils::parse_units(1, 17)?;
         let mut txs: Vec<Vec<u8>> = Vec::new();
         for (from, to) in &self.accounts {
             txs.push(
@@ -116,7 +125,7 @@ impl Client {
                     &TransactionRequest::new()
                         .from(from.clone())
                         .to(to.clone())
-                        .value(U256::from(1u64))
+                        .value(value)
                         .gas(21000),
                 )
                 .unwrap(),
@@ -128,7 +137,7 @@ impl Client {
                 &TransactionRequest::new()
                     .from(self.accounts[0].0)
                     .to(self.accounts[0].1)
-                    .value(U256::from(1u64))
+                    .value(value)
                     .gas(21000),
             )
             .unwrap()
