@@ -1,50 +1,34 @@
 // copied from narwhal codebase's benchmark client
 use anvil_rpc::request::RequestParams;
 use ethers::prelude::*;
-use eyre::Result;
-use once_cell::sync::Lazy;
-use std::collections::HashMap;
-use tendermint_proto::abci::ResponseQuery;
-use yansi::Paint;
-
 // Copyright(C) Facebook, Inc. and its affiliates.
 use anyhow::{Context, Result};
-use bytes::BufMut as _;
-use bytes::BytesMut;
+use bytes::Bytes;
 use clap::{crate_name, crate_version, App, AppSettings};
 use env_logger::Env;
 use futures::future::join_all;
 use futures::sink::SinkExt as _;
 use log::{info, warn};
-use rand::Rng;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio::time::{interval, sleep, Duration, Instant};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-async fn send_transaction(host: &str, from: Address, to: Address, value: U256) -> Result<()> {
-    let tx = TransactionRequest::new()
-        .from(from)
-        .to(to)
-        .value(value)
-        .gas(21000);
+// So looking at this I wonder if this works without selecting the broadcast_tx path
+// since this interfaces directly with the mempool via a TCP connection we do not need to include the routes and create a http request
+// We just need to pass in the Tx struct we need for making the anvil Request at the end.
+// An idea is we adapt this same client to have two, one that sends actual http request and one that does not.
+// I think we change the shim so all Tx types are sent anvil via a Tokio channel which directly forwards responses back to client having warp handle it all
+//      eth_sendTransaction, eth_sendRawTransaction both send the Tx payload to a TCPStream to the mempool
+// Once that is done batch Tx should be supported by the send Tx route -> aka a batched send Tx and a single Tx are accepted the same way
 
-    let tx = serde_json::to_string(&tx)?;
-
-    let client = reqwest::Client::new();
-    client
-        .get(format!("{}/broadcast_tx", host))
-        .query(&[("tx", tx)])
-        .send()
-        .await?;
-
-    Ok(())
-}
-
-async fn get_dev_accounts(host: &str) -> Result<Vec<Address>> {
+async fn get_dev_accounts(host: &SocketAddr) -> Result<Vec<(Address, Address)>> {
     let client = reqwest::Client::new();
     let res = client
-        .get(format!("{}/rpc_query", host))
+        .get(format!(
+            "{}/rpc_query",
+            String::from("http://") + &host.to_string()
+        ))
         .query(&[
             ("method", "eth_accounts".to_owned()),
             (
@@ -55,11 +39,11 @@ async fn get_dev_accounts(host: &str) -> Result<Vec<Address>> {
         .send()
         .await?;
 
-    let val = match serde_json::from_slice::<Vec<Address>>(&res.bytes().await?) {
-        Ok(result) => result,
-        Err(_) => return Err(eyre::eyre!("failed to parse")),
-    };
-    Ok(val)
+    let from = serde_json::from_slice::<Vec<Address>>(&res.bytes().await?).unwrap();
+    let mut to = from.clone();
+    to.rotate_right(1);
+    let accounts = from.into_iter().zip(to.into_iter()).collect();
+    Ok(accounts)
 }
 
 #[tokio::main]
@@ -68,26 +52,18 @@ async fn main() -> Result<()> {
         .version(crate_version!())
         .about("Benchmark client for Narwhal and Tusk.")
         .args_from_usage("<ADDR> 'The network address of the node where to send txs'")
-        // .args_from_usage("--size=<INT> 'The size of each transaction in bytes'")
         .args_from_usage("--rate=<INT> 'The rate (txs/s) at which to send the transactions'")
         .args_from_usage("--nodes=[ADDR]... 'Network addresses that must be reachable before starting the benchmark.'")
         .setting(AppSettings::ArgRequiredElseHelp)
         .get_matches();
-
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
-
     let target = matches
         .value_of("ADDR")
         .unwrap()
         .parse::<SocketAddr>()
         .context("Invalid socket address format")?;
-    // let size = matches
-    //     .value_of("size")
-    //     .unwrap()
-    //     .parse::<usize>()
-    //     .context("The size of transactions must be a non-negative integer")?;
     let rate = matches
         .value_of("rate")
         .unwrap()
@@ -100,19 +76,10 @@ async fn main() -> Result<()> {
         .map(|x| x.parse::<SocketAddr>())
         .collect::<Result<Vec<_>, _>>()
         .context("Invalid socket address format")?;
+    let accounts = get_dev_accounts(&target).await?;
 
-    info!("Node address: {}", target);
-
-    // NOTE: This log entry is used to compute performance.
-    // info!("Transactions size: {} B", size);
-
-    // NOTE: This log entry is used to compute performance.
-    info!("Transactions rate: {} tx/s", rate);
-
-    let accounts = get_dev_accounts(target).await?;
     let client = Client {
         target,
-        // size,
         rate,
         nodes,
         accounts,
@@ -127,10 +94,9 @@ async fn main() -> Result<()> {
 
 struct Client {
     target: SocketAddr,
-    // size: usize,
     rate: u64,
     nodes: Vec<SocketAddr>,
-    accounts: Vec<Address>,
+    accounts: Vec<(Address, Address)>,
 }
 
 impl Client {
@@ -138,23 +104,47 @@ impl Client {
         const PRECISION: u64 = 20; // Sample precision.
         const BURST_DURATION: u64 = 1000 / PRECISION;
 
-        // The transaction size must be at least 16 bytes to ensure all txs are different.
-        // if self.size < 9 {
-        //     return Err(anyhow::Error::msg(
-        //         "Transaction size must be at least 9 bytes",
-        //     ));
-        // }
-
         // Connect to the mempool.
         let stream = TcpStream::connect(self.target)
             .await
             .context(format!("failed to connect to {}", self.target))?;
 
+        let mut txs: Vec<Vec<u8>> = Vec::new();
+        for (from, to) in &self.accounts {
+            txs.push(
+                serde_json::to_vec(
+                    &TransactionRequest::new()
+                        .from(from.clone())
+                        .to(to.clone())
+                        .value(U256::from(1u64))
+                        .gas(21000),
+                )
+                .unwrap(),
+            )
+        }
+        assert_eq!(
+            txs[0],
+            serde_json::to_vec(
+                &TransactionRequest::new()
+                    .from(self.accounts[0].0)
+                    .to(self.accounts[0].1)
+                    .value(U256::from(1u64))
+                    .gas(21000),
+            )
+            .unwrap()
+        );
+
+        info!("Node address: {}", self.target);
+
+        // NOTE: This log entry is used to compute performance.
+        info!("Transactions size: {} B", txs[0].len());
+
+        // NOTE: This log entry is used to compute performance.
+        info!("Transactions rate: {} tx/s", self.rate);
+
         // Submit all transactions.
         let burst = self.rate / PRECISION;
-        let mut tx = BytesMut::with_capacity(self.size);
         let mut counter = 0;
-        let mut r = rand::thread_rng().gen();
         let mut transport = Framed::new(stream, LengthDelimitedCodec::new());
         let interval = interval(Duration::from_millis(BURST_DURATION));
         tokio::pin!(interval);
@@ -167,24 +157,17 @@ impl Client {
             let now = Instant::now();
 
             for x in 0..burst {
-                // if x == counter % burst {
-                //     // NOTE: This log entry is used to compute performance.
-                //     info!("Sending sample transaction {}", counter);
-                //
-                //     tx.put_u8(0u8); // Sample txs start with 0.
-                //     tx.put_u64(counter); // This counter identifies the tx.
-                // } else {
-                //     r += 1;
-                //     tx.put_u8(1u8); // Standard txs start with 1.
-                //     tx.put_u64(r); // Ensures all clients send different txs.
-                // };
-                //
-                // tx.resize(self.size, 0u8);
-                // let bytes = tx.split().freeze();
-                // if let Err(e) = transport.send(bytes).await {
-                //     warn!("Failed to send transaction: {}", e);
-                //     break 'main;
-                // }
+                let tx = Bytes::from(txs[(x as usize % txs.len())].clone());
+                if x == counter % burst {
+                    // NOTE: This log entry is used to compute performance.
+                    info!("Sending sample transaction {}", counter);
+                }
+
+                // TODO: Check this indexing isn't the best and doesn't account for necessary wrap around.
+                if let Err(e) = transport.send(tx).await {
+                    warn!("Failed to send transaction: {}", e);
+                    break 'main;
+                }
             }
             if now.elapsed().as_millis() > BURST_DURATION as u128 {
                 // NOTE: This log entry is used to compute performance.

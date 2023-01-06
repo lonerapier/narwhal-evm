@@ -34,6 +34,9 @@ impl<T: Send + Sync + std::fmt::Debug> RpcShim<T> {
     }
 }
 
+// TODO: replace these routes with traditional ETH routes -> send transaction
+// TODO: See if we can just have all other routes 
+// 2 options: 1) have benchmark Tx go into the 
 impl RpcShim<ResponseQuery> {
     pub fn routes(self) -> impl Filter<Extract = impl warp::Reply, Error = Rejection> + Clone {
         let route_broadcast_tx = warp::path("broadcast_tx")
