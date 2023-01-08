@@ -160,9 +160,9 @@ class LocalBench:
             sleep(self.duration)
             self._kill_nodes()
 
-            # # Parse logs and return the parser.
-            # Print.info('Parsing logs...')
-            # return LogParser.process(PathMaker.logs_path(), faults=self.faults)
+            # Parse logs and return the parser.
+            Print.info('Parsing logs...')
+            return LogParser.process(PathMaker.logs_path(), faults=self.faults)
 
         except Exception as e:
             self._kill_nodes()

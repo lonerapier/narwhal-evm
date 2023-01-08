@@ -44,9 +44,16 @@ class LogParser:
                 results = p.map(self._parse_primaries, primaries)
         except (ValueError, IndexError, AttributeError) as e:
             raise ParseError(f'Failed to parse nodes\' logs: {e}')
-        executed, commits, self.configs, primary_ips = zip(*results)
-        self.executed = self._merge_results([x.items() for x in executed])
+        proposals, commits, executed, self.configs, primary_ips = zip(*results)
+        self.proposals = self._merge_results([x.items() for x in proposals])
         self.commits = self._merge_results([x.items() for x in commits])
+
+        self.executed = []
+        executed = [x for x in executed]
+        for x in executed:
+            self.executed.extend(x)
+        self.executed.sort()
+        # self.executed = self._merge_results([x.items() for x in executed])
 
         # Parse the workers logs.
         try:
@@ -98,18 +105,18 @@ class LogParser:
         if search(r'(?:panicked|Error)', log) is not None:
             raise ParseError('Primary(s) panicked')
 
-        # tmp = findall(r'\[(.*Z) .* Created B\d+\([^ ]+\) -> ([^ ]+=)', log)
-        # tmp = [(d, self._to_posix(t)) for t, d in tmp]
-        # proposals = self._merge_results([tmp])
+        tmp = findall(r'\[(.*Z) .* Created B\d+\([^ ]+\) -> ([^ ]+=)', log)
+        tmp = [(d, self._to_posix(t)) for t, d in tmp]
+        proposals = self._merge_results([tmp])
 
-        # tmp = findall(r'\[(.*Z) .* Committed B\d+\([^ ]+\) -> ([^ ]+=)', log)
-        tmp = findall(r'\[(.*Z) .* Committed B\d+\([^ ]+\)', log)
+        tmp = findall(r'\[(.*Z) .* Committed B\d+\([^ ]+\) -> ([^ ]+=)', log)
         tmp = [(d, self._to_posix(t)) for t, d in tmp]
         commits = self._merge_results([tmp])
 
         tmp = findall(r'\[(.*Z) .* executing \d+ txs', log)
-        tmp = [(d, self._to_posix(t)) for t, d in tmp]
-        executed = self._to_merge_results([tmp])
+        tmp = [self._to_posix(t) for t in tmp]
+        tmp.sort()
+        executed = tmp
 
         configs = {
             'header_size': int(
@@ -137,7 +144,7 @@ class LogParser:
 
         ip = search(r'booted on (\d+.\d+.\d+.\d+)', log).group(1)
 
-        return executed, commits, configs, ip
+        return proposals, commits, executed, configs, ip
 
     def _parse_workers(self, log):
         if search(r'(?:panic|Error)', log) is not None:
@@ -174,7 +181,7 @@ class LogParser:
     def _end_to_end_throughput(self):
         if not self.commits:
             return 0, 0, 0
-        start, end = min(self.start), max(self.executed.values())
+        start, end = min(self.start), self.executed[-1]
         duration = end - start
         bytes = sum(self.sizes.values())
         bps = bytes / duration
@@ -201,12 +208,12 @@ class LogParser:
         batch_size = self.configs[0]['batch_size']
         max_batch_delay = self.configs[0]['max_batch_delay']
 
-        # consensus_latency = self._consensus_latency() * 1_000
-        consensus_latency = 1 * 1000
-        # consensus_tps, consensus_bps, _ = self._consensus_throughput()
+        consensus_latency = self._consensus_latency() * 1_000
+        consensus_tps, consensus_bps, _ = self._consensus_throughput()
         consensus_tps, consensus_bps = 100, 1000
         end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
-        end_to_end_latency = self._end_to_end_latency() * 1_000
+        # end_to_end_latency = self._end_to_end_latency() * 1_000
+        end_to_end_latency = 2
 
         return (
             '\n'

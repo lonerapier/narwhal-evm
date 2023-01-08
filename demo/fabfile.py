@@ -18,7 +18,7 @@ def local(ctx, debug=True):
         'workers': 1,
         'rate': 1_000,
         'tx_size': 512,
-        'duration': 5*60,
+        'duration': 60,
     }
     node_params = {
         'header_size': 50,  # bytes
@@ -30,15 +30,15 @@ def local(ctx, debug=True):
         'max_batch_delay': 200  # ms
     }
 
-    bencher = LocalBench(bench_params, node_params)
-    print(bencher)
-    bencher.run()
+    # bencher = LocalBench(bench_params, node_params)
+    # print(bencher)
+    # bencher.run()
 
-    # try:
-    #     ret = LocalBench(bench_params, node_params).run(debug)
-    #     print(ret.result())
-    # except BenchError as e:
-    #     Print.error(e)
+    try:
+        ret = LocalBench(bench_params, node_params).run(debug)
+        print(ret.result())
+    except BenchError as e:
+        Print.error(e)
 
 
 @task
