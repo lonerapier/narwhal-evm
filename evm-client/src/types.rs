@@ -1,7 +1,3 @@
-use ethers::prelude::*;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
 use abci::{
     async_api::{
         Consensus as ConsensusTrait, Info as InfoTrait, Mempool as MempoolTrait,
@@ -10,6 +6,10 @@ use abci::{
     async_trait,
     types::*,
 };
+use ethers::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use foundry_evm::revm::{
     self,
@@ -74,17 +74,17 @@ impl<Db: Database + DatabaseCommit> State<Db> {
         };
         evm.database(&mut self.db);
 
-        let (ret, out, gas, state, logs) = evm.transact();
+        let (ret, out) = evm.transact();
         if !read_only {
-            self.db.commit(state);
+            self.db.commit(out);
         };
 
         Ok(TransactionResult {
             transaction: tx,
-            exit: ret,
-            gas,
-            logs,
-            out,
+            exit: ret.exit_reason,
+            gas: ret.gas_used,
+            logs: ret.logs,
+            out: ret.out,
         })
     }
 }
@@ -195,6 +195,7 @@ pub struct Info<Db> {
 pub enum Query {
     EthCall(TransactionRequest),
     Balance(Address),
+    // DevAccounts,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -202,6 +203,22 @@ pub enum Query {
 pub enum QueryResponse {
     Tx(TransactionResult),
     Balance(U256),
+    DevAccounts(Vec<Address>),
+    ChainId(U256),
+    BlockNumber(U256),
+    Sign(H256),
+    Logs(Vec<Log>),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BroadcastTxQuery {
+    pub tx: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct JsonRpcRequest {
+    pub method: String,
+    pub params: String,
 }
 
 impl QueryResponse {
@@ -216,6 +233,13 @@ impl QueryResponse {
         match self {
             QueryResponse::Balance(inner) => *inner,
             _ => panic!("not a balance"),
+        }
+    }
+
+    pub fn as_dev_accounts(&self) -> &Vec<Address> {
+        match self {
+            QueryResponse::DevAccounts(inner) => inner,
+            _ => panic!("not a dev accounts"),
         }
     }
 }
@@ -247,7 +271,10 @@ impl<Db: Send + Sync + Database + DatabaseCommit> InfoTrait for Info<Db> {
                 let result = state.execute(tx, true).await.unwrap();
                 QueryResponse::Tx(result)
             }
-            Query::Balance(address) => QueryResponse::Balance(state.db.basic(address).balance),
+            // Query::Balance(address) => QueryResponse::Balance(state.db.basic(address).balance),
+            Query::Balance(address) => {
+                QueryResponse::Balance(state.db.basic(address).ok().unwrap().unwrap().balance)
+            }
         };
 
         ResponseQuery {
@@ -292,7 +319,7 @@ mod tests {
         state.db.insert_account_info(
             alice,
             revm::AccountInfo {
-                balance: val,
+                balance: val.into(),
                 ..Default::default()
             },
         );
@@ -330,6 +357,6 @@ mod tests {
             .await;
         let res: QueryResponse = serde_json::from_slice(&res.value).unwrap();
         let balance = res.as_balance();
-        assert_eq!(balance, val);
+        assert_eq!(balance, val.into());
     }
 }

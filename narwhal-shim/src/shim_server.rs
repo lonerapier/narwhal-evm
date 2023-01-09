@@ -1,5 +1,6 @@
-use crate::{AbciQueryQuery, BroadcastTxQuery};
-
+// use crate::{BroadcastTxQuery, JsonRpcRequest};
+// use anvil_rpc::response::QueryResponse;
+use evm_client::types::{BroadcastTxQuery, JsonRpcRequest};
 use eyre::WrapErr;
 use futures::SinkExt;
 use tendermint_proto::abci::ResponseQuery;
@@ -16,15 +17,15 @@ use std::net::SocketAddr;
 /// * `broadcast_tx`: forwards them to Narwhal's mempool/worker socket, which will proceed to put
 /// it in the consensus process and eventually forward it to the application.
 /// * `abci_query`: forwards them over a channel to a handler (typically the application).
-pub struct AbciApi<T> {
+pub struct RpcShim<T> {
     mempool_address: SocketAddr,
-    tx: Sender<(OneShotSender<T>, AbciQueryQuery)>,
+    tx: Sender<(OneShotSender<T>, JsonRpcRequest)>,
 }
 
-impl<T: Send + Sync + std::fmt::Debug> AbciApi<T> {
+impl<T: Send + Sync + std::fmt::Debug> RpcShim<T> {
     pub fn new(
         mempool_address: SocketAddr,
-        tx: Sender<(OneShotSender<T>, AbciQueryQuery)>,
+        tx: Sender<(OneShotSender<T>, JsonRpcRequest)>,
     ) -> Self {
         Self {
             mempool_address,
@@ -33,7 +34,10 @@ impl<T: Send + Sync + std::fmt::Debug> AbciApi<T> {
     }
 }
 
-impl AbciApi<ResponseQuery> {
+// TODO: replace these routes with traditional ETH routes -> send transaction
+// TODO: See if we can just have all other routes 
+// 2 options: 1) have benchmark Tx go into the 
+impl RpcShim<ResponseQuery> {
     pub fn routes(self) -> impl Filter<Extract = impl warp::Reply, Error = Rejection> + Clone {
         let route_broadcast_tx = warp::path("broadcast_tx")
             .and(warp::query::<BroadcastTxQuery>())
@@ -56,24 +60,26 @@ impl AbciApi<ResponseQuery> {
                 }
             });
 
-        let route_abci_query = warp::path("abci_query")
-            .and(warp::query::<AbciQueryQuery>())
-            .and_then(move |req: AbciQueryQuery| {
-                let tx_abci_queries = self.tx.clone();
+        let route_rpc_query = warp::path("rpc_query")
+            .and(warp::query::<JsonRpcRequest>())
+            .and_then(move |req: JsonRpcRequest| {
+                let tx_rpc_query = self.tx.clone();
                 async move {
-                    log::warn!("abci_query: {:?}", req);
+                    log::warn!("rpc_query: {:?}", req);
 
                     let (tx, rx) = oneshot_channel();
-                    match tx_abci_queries.send((tx, req.clone())).await {
+                    match tx_rpc_query.send((tx, req.clone())).await {
                         Ok(_) => {}
-                        Err(err) => log::error!("Error forwarding abci query: {}", err),
+                        Err(err) => log::error!("Error forwarding rpc query: {}", err),
                     };
+
                     let resp = rx.await.unwrap();
+                    // let resp_str = serde_json::to_string(&resp).unwrap();
                     // Return the value
                     Ok::<_, Rejection>(resp.value)
                 }
             });
 
-        route_broadcast_tx.or(route_abci_query)
+        route_broadcast_tx.or(route_rpc_query)
     }
 }

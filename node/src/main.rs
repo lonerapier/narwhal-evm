@@ -14,7 +14,7 @@ use store::Store;
 use tokio::sync::mpsc::{channel, Receiver};
 use worker::Worker;
 
-use narwhal_abci::{AbciApi, Engine};
+use narwhal_shim::{Engine, RpcShim};
 
 /// The default channel capacity.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -142,6 +142,8 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
                 app_api,
             )
             .await?;
+
+            println!("Primary terminated");
         }
 
         // Spawn a single worker.
@@ -176,7 +178,7 @@ async fn process(
     store_path: &str,
     keypair_name: PublicKey,
     committee: Committee,
-    abci_api: String,
+    rpc_shim_api: String,
     app_api: String,
 ) -> eyre::Result<()> {
     // address of mempool
@@ -186,22 +188,22 @@ async fn process(
         .transactions;
 
     // ABCI queries will be sent using this from the RPC to the ABCI client
-    let (tx_abci_queries, rx_abci_queries) = channel(CHANNEL_CAPACITY);
+    let (tx_rpc_queries, rx_rpc_queries) = channel(CHANNEL_CAPACITY);
 
     tokio::spawn(async move {
-        let api = AbciApi::new(mempool_address, tx_abci_queries);
+        let api = RpcShim::new(mempool_address, tx_rpc_queries);
         // let tx_abci_queries = tx_abci_queries.clone();
         // Spawn the ABCI RPC endpoint
-        let mut address = abci_api.parse::<SocketAddr>().unwrap();
+        let mut address = rpc_shim_api.parse::<SocketAddr>().unwrap();
         address.set_ip("0.0.0.0".parse().unwrap());
         warp::serve(api.routes()).run(address).await
     });
 
     // Analyze the consensus' output.
     // Spawn the network receiver listening to messages from the other primaries.
-    let mut app_address = app_api.parse::<SocketAddr>().unwrap();
-    app_address.set_ip("0.0.0.0".parse().unwrap());
-    let mut engine = Engine::new(app_address, store_path, rx_abci_queries);
+    let app_address = app_api.parse::<SocketAddr>().unwrap();
+    // app_address.set_ip("0.0.0.0".parse().unwrap());
+    let mut engine = Engine::new(app_address, store_path, rx_rpc_queries).await;
     engine.run(rx_output).await?;
 
     Ok(())

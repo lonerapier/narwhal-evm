@@ -1,8 +1,6 @@
-use abci::async_api::Server;
-use evm_abci::App;
-use std::net::SocketAddr;
-
+use anvil::spawn;
 use clap::Parser;
+use std::net::SocketAddr;
 
 #[derive(Debug, Clone, Parser)]
 struct Args {
@@ -29,22 +27,28 @@ pub fn subscriber() {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     let args = Args::parse();
-    subscriber();
+    // subscriber();
 
-    let App {
-        consensus,
-        mempool,
-        info,
-        snapshot,
-    } = App::new(args.demo);
-    let server = Server::new(consensus, mempool, info, snapshot);
-
-    dbg!(&args.host);
-    // let addr = args.host.strip_prefix("http://").unwrap_or(&args.host);
     let addr = args.host.parse::<SocketAddr>().unwrap();
 
-    // let addr = SocketAddr::new(addr, args.port);
-    server.run(addr).await?;
+    let config = anvil::NodeConfig {
+        host: Some(addr.ip()),
+        port: addr.port(),
+        ..Default::default()
+    };
+
+    let (api, handle) = spawn(config).await;
+    // api.anvil_set_interval_mining(1)?;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    match handle.await.unwrap() {
+        Err(err) => {
+            dbg!(err);
+        }
+        Ok(()) => {
+            println!("Listening on {}", addr);
+        }
+    }
 
     Ok(())
 }

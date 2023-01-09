@@ -92,7 +92,7 @@ class LocalBench:
             # Worker transaction endpoint (3003, 3008 etc.)
             # Probably the TPU equivalent?
             workers_addresses = committee.workers_addresses(self.faults)
-
+            abci_addresses = committee.abci_addresses(self.faults)
 
             print("[+] Spinning up apps")
             # Run the apps
@@ -103,23 +103,6 @@ class LocalBench:
                 self._background_run(cmd, log_file)
 
             sleep(1)
-
-            # print("[+] Spinning up clients")
-            # # The benchmark clients connect to the worker addresses to submit transactions
-            # # Starts 1 client for each worker process.
-            # rate_share = ceil(rate / committee.workers())
-            # for i, addresses in enumerate(workers_addresses):
-            #     for (id, address) in addresses:
-            #         cmd = CommandMaker.run_client(
-            #             address,
-            #             self.tx_size,
-            #             rate_share,
-            #             [x for y in workers_addresses for _, x in y]
-            #         )
-            #         log_file = PathMaker.client_log_file(i, id)
-            #         print("--> [+] Running", cmd, log_file)
-            #         self._background_run(cmd, log_file)
-
 
             print("[+] Spinning up primaries")
             # Run the primaries (except the faulty ones).
@@ -136,7 +119,8 @@ class LocalBench:
                 log_file = PathMaker.primary_log_file(i)
                 # Each one of these starts a new tmux session
                 self._background_run(cmd, log_file)
-
+            # wait for the primaries to start
+            sleep(3)
 
             print("[+] Spinning up workers")
             # Run the workers (except the faulty ones).
@@ -152,16 +136,33 @@ class LocalBench:
                     )
                     log_file = PathMaker.worker_log_file(i, id)
                     self._background_run(cmd, log_file)
+            # wait for the workers to start
+            sleep(3)
 
+            print("[+] Spinning up clients")
+            # The benchmark clients connect to the worker addresses to submit transactions
+            # Starts 1 client for each worker process.
+            rate_share = ceil(rate / committee.workers())
+            for i, addresses in enumerate(workers_addresses):
+                for (id, address) in addresses:
+                    cmd = CommandMaker.run_client(
+                        address,
+                        abci_addresses[i][1],
+                        rate_share,
+                        [x for y in workers_addresses for _, x in y]
+                    )
+                    log_file = PathMaker.client_log_file(i, id)
+                    print("--> [+] Running", cmd, log_file)
+                    self._background_run(cmd, log_file)
 
             # Wait for all transactions to be processed.
             Print.info(f'Running benchmark ({self.duration} sec)...')
             sleep(self.duration)
             self._kill_nodes()
 
-            # # Parse logs and return the parser.
-            # Print.info('Parsing logs...')
-            # return LogParser.process(PathMaker.logs_path(), faults=self.faults)
+            # Parse logs and return the parser.
+            Print.info('Parsing logs...')
+            return LogParser.process(PathMaker.logs_path(), faults=self.faults)
 
         except Exception as e:
             self._kill_nodes()

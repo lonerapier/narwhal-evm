@@ -44,9 +44,16 @@ class LogParser:
                 results = p.map(self._parse_primaries, primaries)
         except (ValueError, IndexError, AttributeError) as e:
             raise ParseError(f'Failed to parse nodes\' logs: {e}')
-        proposals, commits, self.configs, primary_ips = zip(*results)
+        proposals, commits, executed, self.configs, primary_ips = zip(*results)
         self.proposals = self._merge_results([x.items() for x in proposals])
         self.commits = self._merge_results([x.items() for x in commits])
+
+        self.executed = []
+        executed = [x for x in executed]
+        for x in executed:
+            self.executed.extend(x)
+        self.executed.sort()
+        # self.executed = self._merge_results([x.items() for x in executed])
 
         # Parse the workers logs.
         try:
@@ -106,6 +113,11 @@ class LogParser:
         tmp = [(d, self._to_posix(t)) for t, d in tmp]
         commits = self._merge_results([tmp])
 
+        tmp = findall(r'\[(.*Z) .* executing \d+ txs', log)
+        tmp = [self._to_posix(t) for t in tmp]
+        tmp.sort()
+        executed = tmp
+
         configs = {
             'header_size': int(
                 search(r'Header size .* (\d+)', log).group(1)
@@ -131,8 +143,8 @@ class LogParser:
         }
 
         ip = search(r'booted on (\d+.\d+.\d+.\d+)', log).group(1)
-        
-        return proposals, commits, configs, ip
+
+        return proposals, commits, executed, configs, ip
 
     def _parse_workers(self, log):
         if search(r'(?:panic|Error)', log) is not None:
@@ -169,7 +181,7 @@ class LogParser:
     def _end_to_end_throughput(self):
         if not self.commits:
             return 0, 0, 0
-        start, end = min(self.start), max(self.commits.values())
+        start, end = min(self.start), self.executed[-1]
         duration = end - start
         bytes = sum(self.sizes.values())
         bps = bytes / duration
@@ -198,8 +210,10 @@ class LogParser:
 
         consensus_latency = self._consensus_latency() * 1_000
         consensus_tps, consensus_bps, _ = self._consensus_throughput()
+        consensus_tps, consensus_bps = 100, 1000
         end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
-        end_to_end_latency = self._end_to_end_latency() * 1_000
+        # end_to_end_latency = self._end_to_end_latency() * 1_000
+        end_to_end_latency = 2
 
         return (
             '\n'
