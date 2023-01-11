@@ -183,8 +183,10 @@ class LogParser:
             return 0, 0, 0
         start, end = min(self.start), self.executed[-1]
         duration = end - start
+        print(self.sizes)
         bytes = sum(self.sizes.values())
         bps = bytes / duration
+        print(bytes)
         tps = bps / self.size[0]
         return tps, bps, duration
 
@@ -210,7 +212,6 @@ class LogParser:
 
         consensus_latency = self._consensus_latency() * 1_000
         consensus_tps, consensus_bps, _ = self._consensus_throughput()
-        consensus_tps, consensus_bps = 100, 1000
         end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
         # end_to_end_latency = self._end_to_end_latency() * 1_000
         end_to_end_latency = 2

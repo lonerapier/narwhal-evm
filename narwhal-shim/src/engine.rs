@@ -238,7 +238,7 @@ impl Engine {
 
         for batch in batches {
             let batch = batch?;
-            len = self.deliver_batch(batch).await?;
+            len = len + self.deliver_batch(batch).await?;
         }
 
         Ok(len)
