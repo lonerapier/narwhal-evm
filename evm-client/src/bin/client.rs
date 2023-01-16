@@ -3,7 +3,6 @@ use ethers::prelude::*;
 use eyre::Result;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use tendermint_proto::abci::ResponseQuery;
 use yansi::Paint;
 
 static ALICE: Lazy<Address> = Lazy::new(|| {
