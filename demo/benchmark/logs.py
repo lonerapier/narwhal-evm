@@ -14,7 +14,7 @@ class ParseError(Exception):
 
 
 class LogParser:
-    def __init__(self, clients, primaries, workers, faults=0):
+    def __init__(self, clients, primaries, workers, apps=None, faults=0):
         inputs = [clients, primaries, workers]
         assert all(isinstance(x, list) for x in inputs)
         assert all(isinstance(x, str) for y in inputs for x in y)
@@ -65,6 +65,15 @@ class LogParser:
         self.sizes = {
             k: v for x in sizes for k, v in x.items() if k in self.commits
         }
+
+        # Parse the app logs
+        try:
+            with Pool() as p:
+                results = p.map(self._parse_apps, apps)
+        except (ValueError, IndexError, AttributeError) as e:
+            raise ParseError(f'Failed to parse apps\' logs: {e}')
+        executed_txs = zip(*results)
+        self.executed_txs = [tx for tx in executed_txs]
 
         # Determine whether the primary and the workers are collocated.
         self.collocate = set(primary_ips) == set(workers_ips)
@@ -160,6 +169,10 @@ class LogParser:
 
         return sizes, samples, ip
 
+    def _parse_apps(self, log):
+        tmp = findall(r'.*Block Number: (\d+)', log)
+        return tmp
+
     def _to_posix(self, string):
         x = datetime.fromisoformat(string.replace('Z', '+00:00'))
         return datetime.timestamp(x)
@@ -183,12 +196,14 @@ class LogParser:
             return 0, 0, 0
         start, end = min(self.start), self.executed[-1]
         duration = end - start
-        print(self.sizes)
+        # print(self.sizes)
         bytes = sum(self.sizes.values())
         bps = bytes / duration
         print(bytes)
         tps = bps / self.size[0]
-        return tps, bps, duration
+        atps = len(self.executed_txs)/duration
+
+        return tps, bps, atps, duration
 
     def _end_to_end_latency(self):
         latency = []
@@ -212,7 +227,7 @@ class LogParser:
 
         consensus_latency = self._consensus_latency() * 1_000
         consensus_tps, consensus_bps, _ = self._consensus_throughput()
-        end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
+        end_to_end_tps, end_to_end_bps, anvil_tps, duration = self._end_to_end_throughput()
         # end_to_end_latency = self._end_to_end_latency() * 1_000
         end_to_end_latency = 2
 
@@ -244,6 +259,7 @@ class LogParser:
             f' Consensus latency: {round(consensus_latency):,} ms\n'
             '\n'
             f' End-to-end TPS: {round(end_to_end_tps):,} tx/s\n'
+            f' Anvil TPS: {round(anvil_tps):,} tx/s\n'
             f' End-to-end BPS: {round(end_to_end_bps):,} B/s\n'
             f' End-to-end latency: {round(end_to_end_latency):,} ms\n'
             '-----------------------------------------\n'
@@ -271,4 +287,9 @@ class LogParser:
             with open(filename, 'r') as f:
                 workers += [f.read()]
 
-        return cls(clients, primaries, workers, faults=faults)
+        apps = []
+        for filename in sorted(glob(join(directory, 'app-*.log'))):
+            with open(filename, 'r') as f:
+                apps += [f.read()]
+
+        return cls(clients, primaries, workers, apps, faults=faults)
