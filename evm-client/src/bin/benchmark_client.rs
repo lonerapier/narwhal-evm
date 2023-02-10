@@ -9,6 +9,7 @@ use env_logger::Env;
 use futures::future::join_all;
 use futures::sink::SinkExt as _;
 use log::{info, warn};
+use rand::{thread_rng, Rng};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio::time::{interval, sleep, Duration, Instant};
@@ -86,7 +87,6 @@ async fn main() -> Result<()> {
 
     let client = Client {
         target,
-        shim_address,
         rate,
         nodes,
         accounts,
@@ -101,7 +101,6 @@ async fn main() -> Result<()> {
 
 struct Client {
     target: SocketAddr,
-    shim_address: SocketAddr,
     rate: u64,
     nodes: Vec<SocketAddr>,
     accounts: Vec<(Address, Address)>,
@@ -112,12 +111,14 @@ impl Client {
         const PRECISION: u64 = 20; // Sample precision.
         const BURST_DURATION: u64 = 1000 / PRECISION;
 
+        let mut rng = thread_rng();
+
         // Connect to the mempool.
         let stream = TcpStream::connect(self.target)
             .await
             .context(format!("failed to connect to {}", self.target))?;
 
-        let value = ethers::utils::parse_units(1, 17)?;
+        let value = ethers::utils::parse_units(1, 15)?;
         let mut txs: Vec<Vec<u8>> = Vec::new();
         for (from, to) in &self.accounts {
             txs.push(
@@ -126,7 +127,8 @@ impl Client {
                         .from(from.clone())
                         .to(to.clone())
                         .value(value)
-                        .gas(21000),
+                        .gas(21000)
+                        .data([0u8; 1]),
                 )
                 .unwrap(),
             )
@@ -138,7 +140,8 @@ impl Client {
                     .from(self.accounts[0].0)
                     .to(self.accounts[0].1)
                     .value(value)
-                    .gas(21000),
+                    .gas(21000)
+                    .data([0u8; 1]),
             )
             .unwrap()
         );
@@ -159,21 +162,36 @@ impl Client {
         tokio::pin!(interval);
 
         // NOTE: This log entry is used to compute performance.
-        info!("Start sending transactions");
+        info!(
+            "Start sending transactions. Burst_duration: {}, burst: {}",
+            BURST_DURATION, burst
+        );
 
         'main: loop {
             interval.as_mut().tick().await;
             let now = Instant::now();
 
+            let idx = counter as usize % self.accounts.len();
+
             for x in 0..burst {
-                let tx = Bytes::from(txs[(x as usize % txs.len())].clone());
+                let tx = serde_json::to_vec(
+                    &TransactionRequest::new()
+                        .from(self.accounts[idx].0)
+                        .to(self.accounts[idx].1)
+                        .value(value)
+                        .gas(30000)
+                        .data(rng.gen::<[u8; 1]>()),
+                )
+                .unwrap();
+
+                // let tx = Bytes::from(txs[(counter as usize % txs.len())].clone());
                 if x == counter % burst {
                     // NOTE: This log entry is used to compute performance.
                     info!("Sending sample transaction {}", counter);
                 }
 
                 // TODO: Check this indexing isn't the best and doesn't account for necessary wrap around.
-                if let Err(e) = transport.send(tx).await {
+                if let Err(e) = transport.send(Bytes::from(tx)).await {
                     warn!("Failed to send transaction: {}", e);
                     break 'main;
                 }

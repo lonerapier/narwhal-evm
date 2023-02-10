@@ -1,6 +1,5 @@
 use anvil_core::eth::EthRequest;
 use ethers::prelude::*;
-use ethers_providers::Ws;
 use evm_client::types::JsonRpcRequest;
 use std::convert::TryFrom;
 use std::net::SocketAddr;
@@ -23,7 +22,6 @@ pub struct Engine {
     pub rx_rpc_queries: Receiver<(OneShotSender<ResponseQuery>, JsonRpcRequest)>,
     pub client: Provider<Http>,
     pub req_client: Provider<Http>,
-    // pub ws_client: Provider<Ws>,
 }
 
 impl Engine {
@@ -36,10 +34,6 @@ impl Engine {
             Provider::<Http>::try_from(String::from("http://") + &app_address.to_string()).unwrap();
         let client =
             Provider::<Http>::try_from(String::from("http://") + &app_address.to_string()).unwrap();
-        // let ws_client =
-        //     Provider::<Ws>::connect((String::from("ws://") + &app_address.to_string()).as_str())
-        //         .await
-        //         .unwrap();
 
         Self {
             app_address,
@@ -47,7 +41,6 @@ impl Engine {
             rx_rpc_queries,
             client,
             req_client,
-            // ws_client,
         }
     }
 
@@ -76,16 +69,6 @@ impl Engine {
         // drive the app through the event loop
         let num_txs = self.reconstruct_and_deliver_txs(certificate).await?;
         self.commit(num_txs).await?;
-
-        // let sub_id = self
-        //     .ws_client
-        //     .request("eth_subscribe", ["newHeads"])
-        //     .await?;
-        // let stream = self.ws_client.subscribe_blocks().await?;
-        // let blocks = stream.take(num_txs).collect::<Vec<_>>().await;
-        // for block in blocks {
-        //     println!("block: {:?}", block);
-        // }
 
         Ok(())
     }
@@ -119,17 +102,7 @@ impl Engine {
                 err.into()
             }
         };
-        // let resp = self
-        //     .req_client
-        //     .request::<_, QueryResponse>(&method, value)
-        //     .await?;
 
-        // dbg!(&res);
-
-        // let resp = ResponseQuery::new(
-        //     anvil_rpc::request::Id::Number(1),
-        //     RpcError::invalid_request(),
-        // );
         if let Err(err) = tx.send(ResponseQuery {
             value: res,
             ..Default::default()
@@ -180,7 +153,7 @@ impl Engine {
 
     /// Opens a RocksDB handle to a Worker's database and tries to read the batch
     /// stored at the provided certificate's digest.
-    fn reconstruct_batch(&self, digest: Digest, worker_id: u32) -> eyre::Result<Vec<u8>> {
+    fn reconstruct_batch(&self, digest: Digest, worker_id: u32) -> eyre::Result<(Vec<u8>, Digest)> {
         // Open the database to each worker
         // TODO: Figure out if this is expensive
         let db = rocksdb::DB::open_for_read_only(
@@ -192,19 +165,19 @@ impl Engine {
         // Query the db
         let key = digest.to_vec();
         match db.get(&key) {
-            Ok(Some(res)) => Ok(res),
+            Ok(Some(res)) => Ok((res, digest)),
             Ok(None) => eyre::bail!("digest {} not found", digest),
             Err(err) => eyre::bail!(err),
         }
     }
 
-    async fn deliver_batch(&mut self, batch: Vec<u8>) -> eyre::Result<usize> {
+    async fn deliver_batch(&mut self, batch: Vec<u8>, digest: Digest) -> eyre::Result<usize> {
         // Deserialize and parse the message.
         let mut len = 0;
         match bincode::deserialize(&batch) {
             Ok(WorkerMessage::Batch(batch)) => {
-                // log::warn!("batch_size: {}", batch.len());
                 len = batch.len();
+                // log::info!("executing batch {}", digest);
                 for tx in batch {
                     self.deliver_tx(tx).await?;
                 }
@@ -219,7 +192,7 @@ impl Engine {
     async fn reconstruct_and_deliver_txs(
         &mut self,
         certificate: Certificate,
-    ) -> eyre::Result<usize> {
+    ) -> eyre::Result<(usize, Vec<Digest>)> {
         // Try reconstructing the batches from the cert digests
         //
         // NB:
@@ -227,7 +200,7 @@ impl Engine {
         // iterator fails to compile because we're mutably borrowing in the `try_for_each`
         // when we've already immutably borrowed in the `.map`.
         #[allow(clippy::needless_collect)]
-        let batches = certificate
+        let batches= certificate
             .header
             .payload
             .into_iter()
@@ -235,13 +208,15 @@ impl Engine {
             .collect::<Vec<_>>();
 
         let mut len = 0;
+        let mut digests = Vec::new();
 
         for batch in batches {
-            let batch = batch?;
-            len = self.deliver_batch(batch).await?;
+            let (batch , digest) = batch?;
+            digests.push(digest.clone());
+            len = len + self.deliver_batch(batch, digest).await?;
         }
 
-        Ok(len)
+        Ok((len, digests))
     }
 
     /// Helper function for getting the database handle to a worker associated
@@ -276,10 +251,15 @@ impl Engine {
     }
 
     // / Calls the `Commit` hook to mine pending txs.
-    async fn commit(&mut self, num_txs: usize) -> eyre::Result<()> {
+    async fn commit(&mut self, num_txs: (usize, Vec<Digest>)) -> eyre::Result<()> {
+        let (num_txs, digests) = num_txs;
         if num_txs > 0 {
             log::info!("executing {} txs", num_txs);
+            for digest in digests {
+                log::info!("executing batch {}", digest);
+            }
         }
+
         // let res = self
         //     .client
         //     .request("anvil_mine", vec![U256::from(num_txs as u64), U256::zero()])
@@ -291,12 +271,10 @@ impl Engine {
         {
             Ok(res) => res,
             Err(err) => {
-                // log::error!("could not mine txs: {}", err);
                 dbg!(&err);
                 eyre::bail!(err);
             }
         };
-        // dbg!(res);
         Ok(())
     }
 }
